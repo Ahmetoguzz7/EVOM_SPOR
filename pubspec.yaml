@@ -1,0 +1,65 @@
+name: EVOM_SPOR
+description: "EVOM_SPOR Uygulaması"
+publish_to: 'none'
+
+version: 1.0.6+1
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # UI
+  cupertino_icons: ^1.0.8
+  carousel_slider: ^5.1.2
+  
+  # Network & Storage
+  http: ^1.6.0
+  shared_preferences: ^2.2.2
+  path_provider: ^2.1.5
+  sqflite: ^2.4.2+1
+  connectivity_plus: ^7.1.1
+  
+  # File & Image
+  image_picker: ^1.2.1
+  path: ^1.9.1
+  
+  # PDF & Printing
+  pdf: ^3.11.3
+  printing: ^5.11.0
+  
+  # Email
+  flutter_email_sender: ^8.0.0
+  mailer: ^6.0.1
+  
+  # Utils
+  intl: ^0.20.2
+  url_launcher: ^6.3.2
+  package_info_plus: ^10.1.0
+  flutter_launcher_icons: ^0.13.1
+  # Background
+  workmanager: ^0.9.0+3
+  #flutter_local_notifications: ^21.0.0
+  flutter_local_notifications: ^21.0.0
+  cached_network_image: ^3.4.1
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/bg.jpg
+    - assets/images/6272.jpg
+    - assets/images/sports.png
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/images/6272.jpg"   # 🔥 İKON DOSYANIN YOLU
+  adaptive_icon_background: "#1E293B"        # 🔥 ARKA PLAN RENGİ (koyu mavi)
+  adaptive_icon_foreground: "assets/images/6272.jpg"
+  remove_alpha_ios: true
