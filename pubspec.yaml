@@ -2,7 +2,7 @@ name: EVOM_SPOR
 description: "EVOM_SPOR Uygulaması"
 publish_to: 'none'
 
-version: 1.0.6+1
+version: 1.0.7+1
 
 environment:
   sdk: ^3.11.0
@@ -11,7 +11,7 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # UI
+  # UIs
   cupertino_icons: ^1.0.8
   carousel_slider: ^5.1.2
   
