@@ -3,7 +3,7 @@
   Kullanıcıların doğum günlerini Google Sheets'ten çekerek her yıl tekrarlayan bildirimler oluşturur.
   Ayrıca, Ramazan Bayramı, Kurban Bayramı, Yılbaşı gibi önemli günlerde genel bildirimler gösterir.
 */
-
+/*
 import 'package:flutter/material.dart';
 import 'package:EVOM_SPOR/app_notificotions/locaal_notifications_service.dart';
 import 'package:EVOM_SPOR/datapage/data_page/data.dart';
@@ -154,3 +154,4 @@ class SpecialDayService {
     }
   }
 }
+*/

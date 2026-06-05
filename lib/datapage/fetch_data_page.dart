@@ -117,7 +117,7 @@ class GoogleSheetService {
   static final DataCache _cache = DataCache();
 
   static const String _baseUrl =
-      "https://script.google.com/macros/s/AKfycbxhKZEJa39pwINsbZt0xcpFOgKXLGvZDOvPDmgdzb1xHkaC0sgWtx8QltplpCa-jp3V/exec";
+      "https://script.google.com/macros/s/AKfycbywI2z_lyAX8sYZFxF9Zre-NkzKhHFWYCJykFHZeN_WW4Y4Q27ko3V44S4CZuEC2dW7/exec";
 
   // =========================================================================
   // 🔥 MERKEZİ POST FONKSİYONU (302 YÖNLENDİRMESİNİ OTOMATİK ÇÖZER)
@@ -2057,6 +2057,37 @@ class GoogleSheetService {
       return false;
     } catch (e) {
       print("❌ updateGroupStatus hatası: $e");
+      return false;
+    }
+  }
+  // =========================================================================
+  // ✅ KULLANICI AYLIK ÜCRET GÜNCELLEME
+  // =========================================================================
+
+  // =========================================================================
+  // ✅ KULLANICI AYLIK ÜCRET GÜNCELLEME
+  // =========================================================================
+
+  static Future<bool> updateUserAmount(String userId, double newAmount) async {
+    try {
+      final response = await _postRequest({
+        "action": "updateUserAmount",
+        "user_id": userId,
+        "amount": newAmount.toString(),
+      });
+
+      if (response != null && response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        final success = decoded['success'] == true;
+        if (success) {
+          print("✅ Kullanıcı ücreti güncellendi: $userId -> $newAmount TL");
+          invalidateCache('users');
+        }
+        return success;
+      }
+      return false;
+    } catch (e) {
+      print("❌ updateUserAmount hatası: $e");
       return false;
     }
   }

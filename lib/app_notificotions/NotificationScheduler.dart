@@ -3,7 +3,7 @@
   Uygulama her açıldığında ve her gün saat 09:00'da özel günleri kontrol eder.
   Eğer o gün doğum günü, tatil veya Sevgililer Günü varsa, ilgili bildirimler gönderilir.
 */
-
+/*
 import 'dart:async';
 import 'special_day_service.dart';
 
@@ -54,3 +54,4 @@ class NotificationScheduler {
     _timer?.cancel();
   }
 }
+*/

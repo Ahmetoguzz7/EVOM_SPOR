@@ -13,7 +13,7 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 // 👇 GITHUB BİLGİLERİN
 const String GITHUB_USERNAME = "Ahmetoguzz7";
-const String GITHUB_REPO = "Spor_Application_Work";
+const String GITHUB_REPO = "EVOM_SPOR";
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();

@@ -4,7 +4,7 @@
   - Doğum günü, özel gün ve duyuru bildirimleri için hazır fonksiyonlar içerir
   - Her platformda çalışacak şekilde SnackBar desteği sağlar
 */
-
+/*
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'dart:io';
@@ -130,3 +130,4 @@ class LocalNotificationService {
     );
   }
 }
+*/
