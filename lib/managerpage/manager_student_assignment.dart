@@ -1,223 +1,8 @@
-/*
-  manager_payment_dekont.dart - Ödeme Dekontu Ekranı
-  - Öğrenciye ait ödeme bilgilerini gösterir
-  - Yeni ödeme ekleme ve mevcut ödemeleri görüntüleme imkanı sağlar
-  - Aylık ücret, ödenen tutar ve kalan borç gibi bilgileri hesaplar
-  - Ödeme geçmişini detaylı şekilde listeler
-  - Kullanıcı dostu arayüz ile hızlı işlem yapma imkanı sunar
-  */
-/*
 import 'package:flutter/material.dart';
 import 'package:EVOM_SPOR/datapage/data_page/data.dart';
 import 'package:EVOM_SPOR/datapage/fetch_data_page.dart';
 import 'package:EVOM_SPOR/managerpage/manager_interface.dart';
-
-class StudentAssignmentScreen extends StatefulWidget {
-  final Group group;
-  const StudentAssignmentScreen({required this.group});
-
-  @override
-  _StudentAssignmentScreenState createState() =>
-      _StudentAssignmentScreenState();
-}
-
-class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
-  List<Users> allStudents = [];
-  List<Users> filteredStudents = [];
-  List<GroupStudent> allRelations = [];
-  bool isLoading = true;
-  String searchQuery = "";
-
-  @override
-  void initState() {
-    super.initState();
-    _loadData();
-  }
-
-  Future<void> _loadData() async {
-    if (!mounted) return; // ✅ EKLENDI - mounted kontrolü
-
-    setState(() => isLoading = true);
-
-    try {
-      final students = await GoogleSheetService.getStudentsOnly();
-      final relations = await GoogleSheetService.getGroupStudents();
-
-      if (!mounted) return; // ✅ EKLENDI - mounted kontrolü
-
-      setState(() {
-        allStudents = students;
-        allRelations = relations;
-        _filterStudents("");
-        isLoading = false;
-      });
-    } catch (e) {
-      // print("Yükleme hatası: $e");
-      if (mounted) {
-        setState(() => isLoading = false);
-      }
-    }
-  }
-
-  void _filterStudents(String query) {
-    if (!mounted) return; // ✅ EKLENDI - mounted kontrolü
-
-    setState(() {
-      searchQuery = query;
-      filteredStudents = allStudents.where((student) {
-        final fullName = "${student.first_name} ${student.last_name}"
-            .toLowerCase();
-        final alreadyInGroup = allRelations.any(
-          (rel) =>
-              rel.groups_id == widget.group.groups_id &&
-              rel.student_id == student.app &&
-              rel.is_active == "TRUE",
-        );
-        return fullName.contains(query.toLowerCase()) && !alreadyInGroup;
-      }).toList();
-    });
-  }
-
-  Future<void> _assignStudent(Users student) async {
-    final newRelation = {
-      "groups_id": widget.group.groups_id,
-      "student_id": student.app,
-      "enrolled_at": DateTime.now().toIso8601String(),
-      "is_active": "TRUE",
-    };
-
-    bool ok = await GoogleSheetService.insertData(
-      "group_students",
-      newRelation,
-    );
-
-    if (ok && mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("${student.first_name} eklendi!")));
-      _loadData(); // Listeyi güncelle
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
-      appBar: AppBar(
-        title: Text("${widget.group.name} | Atama"),
-        backgroundColor: Colors.indigo,
-        leading: IconButton(
-          icon: const Icon(Icons.logout),
-          onPressed: () => Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (_) => AdminDashboard(currentUserRole: 'admin'),
-            ),
-          ),
-        ),
-      ),
-      body: isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: TextField(
-                    onChanged: _filterStudents,
-                    decoration: InputDecoration(
-                      hintText: "Öğrenci ara (İsim/Soyisim)...",
-                      prefixIcon: const Icon(Icons.search),
-                      filled: true,
-                      fillColor: Colors.white,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(15),
-                        borderSide: BorderSide.none,
-                      ),
-                    ),
-                  ),
-                ),
-                SizedBox(
-                  height: 50,
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    children: [
-                      _actionChip("Tümü", Icons.all_inclusive, Colors.blue),
-                      _actionChip(
-                        "Yeni Kayıtlar",
-                        Icons.fiber_new,
-                        Colors.green,
-                      ),
-                      _actionChip("Borçlular", Icons.warning, Colors.red),
-                      _actionChip("Lisanslılar", Icons.verified, Colors.orange),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Expanded(
-                  child: filteredStudents.isEmpty
-                      ? const Center(child: Text("Öğrenci bulunamadı."))
-                      : ListView.builder(
-                          itemCount: filteredStudents.length,
-                          itemBuilder: (context, index) {
-                            final s = filteredStudents[index];
-                            return Card(
-                              margin: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 4,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: ListTile(
-                                leading: CircleAvatar(
-                                  backgroundColor: Colors.indigo.shade50,
-                                  child: const Icon(
-                                    Icons.person,
-                                    color: Colors.indigo,
-                                  ),
-                                ),
-                                title: Text("${s.first_name} ${s.last_name}"),
-                                subtitle: Text(s.phone),
-                                trailing: IconButton(
-                                  icon: const Icon(
-                                    Icons.add_circle,
-                                    color: Colors.green,
-                                    size: 30,
-                                  ),
-                                  onPressed: () => _assignStudent(s),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                ),
-              ],
-            ),
-    );
-  }
-
-  Widget _actionChip(String label, IconData icon, Color color) {
-    return Container(
-      margin: const EdgeInsets.only(right: 8),
-      child: ActionChip(
-        avatar: Icon(icon, size: 18, color: color),
-        label: Text(label),
-        onPressed: () {},
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-          side: BorderSide(color: color.withOpacity(0.3)),
-        ),
-      ),
-    );
-  }
-}
-*/
-import 'package:flutter/material.dart';
-import 'package:EVOM_SPOR/datapage/data_page/data.dart';
-import 'package:EVOM_SPOR/datapage/fetch_data_page.dart';
-import 'package:EVOM_SPOR/managerpage/manager_interface.dart';
+import 'package:flutter/scheduler.dart';
 
 class StudentAssignmentScreen extends StatefulWidget {
   final Group group;
@@ -235,40 +20,88 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
   List<GroupStudent> allRelations = [];
   String searchQuery = "";
 
+  // 🔥 YENİ: İlk yükleme kontrolü
+  bool _isInitialLoad = true;
+
   @override
   void initState() {
     super.initState();
-    _dataFuture = _loadData();
+    _dataFuture = _loadDataParallel();
   }
 
-  Future<Map<String, dynamic>> _loadData() async {
+  // 🚀 PARALEL VERİ ÇEKEN METOD
+  Future<Map<String, dynamic>> _loadDataParallel() async {
+    final stopwatch = Stopwatch()..start();
+
     try {
-      final students = await GoogleSheetService.getStudentsOnlyCached();
-      final relations = await GoogleSheetService.getGroupStudentsCached();
+      final results = await Future.wait([
+        GoogleSheetService.getStudentsOnlyCached(),
+        GoogleSheetService.getGroupStudentsCached(),
+      ]);
+
+      final students = results[0] as List<Users>;
+      final relations = results[1] as List<GroupStudent>;
+
+      stopwatch.stop();
+      print(
+        "⏱️ StudentAssignmentScreen verileri PARALEL olarak ${stopwatch.elapsedMilliseconds}ms'de yüklendi",
+      );
 
       return {'students': students, 'relations': relations};
     } catch (e) {
-      print("Yükleme hatası: $e");
+      print("❌ Yükleme hatası: $e");
       return {'students': <Users>[], 'relations': <GroupStudent>[]};
     }
   }
 
+  // 🔥 DÜZELTİLMİŞ: Filtreleme metodu (setState kontrolü ile)
   void _filterStudents(String query) {
+    // Eğer widget build edilirken çağrıldıysa, addPostFrameCallback ile ertele
     if (!mounted) return;
 
+    // 🔥 KRİTİK: Eğer şu anda build aşamasındaysak, setState'i ertele
+    if (SchedulerBinding.instance.schedulerPhase ==
+            SchedulerPhase.persistentCallbacks ||
+        SchedulerBinding.instance.schedulerPhase ==
+            SchedulerPhase.postFrameCallbacks) {
+      // Build aşamasındaysak, bir sonraki frame'de çalıştır
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {
+            searchQuery = query;
+            _applyFilter();
+          });
+        }
+      });
+    } else {
+      // Normal durumda direkt setState
+      setState(() {
+        searchQuery = query;
+        _applyFilter();
+      });
+    }
+  }
+
+  // 🔥 YENİ: Filtreleme mantığını ayrı metoda al
+  void _applyFilter() {
+    filteredStudents = allStudents.where((student) {
+      final fullName = "${student.first_name} ${student.last_name}"
+          .toLowerCase();
+      final alreadyInGroup = allRelations.any(
+        (rel) =>
+            rel.groups_id == widget.group.groups_id &&
+            rel.student_id == student.app &&
+            rel.is_active.toString().toUpperCase() == "TRUE",
+      );
+      return fullName.contains(searchQuery.toLowerCase()) && !alreadyInGroup;
+    }).toList();
+  }
+
+  // 🔥 YENİ: Veriler yüklendikten sonra filtrelemeyi başlat
+  void _onDataLoaded() {
+    if (!mounted) return;
     setState(() {
-      searchQuery = query;
-      filteredStudents = allStudents.where((student) {
-        final fullName = "${student.first_name} ${student.last_name}"
-            .toLowerCase();
-        final alreadyInGroup = allRelations.any(
-          (rel) =>
-              rel.groups_id == widget.group.groups_id &&
-              rel.student_id == student.app &&
-              rel.is_active == "TRUE",
-        );
-        return fullName.contains(query.toLowerCase()) && !alreadyInGroup;
-      }).toList();
+      _applyFilter();
     });
   }
 
@@ -286,12 +119,24 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
     );
 
     if (ok && mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("${student.first_name} eklendi!")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("${student.first_name} ${student.last_name} eklendi!"),
+        ),
+      );
+      // 🔥 Verileri yeniden yükle
       setState(() {
-        _dataFuture = _loadData();
+        _dataFuture = _loadDataParallel();
       });
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            "Ekleme başarısız oldu!",
+            style: TextStyle(color: Colors.red),
+          ),
+        ),
+      );
     }
   }
 
@@ -300,12 +145,11 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
-        title: Text("${widget.group.name} | Atama"),
+        title: Text("${widget.group.name} | Öğrenci Atama"),
         backgroundColor: Colors.indigo,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () {
-            // Ana sayfayı yeniden başlatmadan geri dön
             Navigator.pop(context);
           },
         ),
@@ -329,7 +173,7 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
                   ElevatedButton(
                     onPressed: () {
                       setState(() {
-                        _dataFuture = _loadData();
+                        _dataFuture = _loadDataParallel();
                       });
                     },
                     child: const Text("Tekrar Dene"),
@@ -343,8 +187,12 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
           allStudents = data['students'] ?? [];
           allRelations = data['relations'] ?? [];
 
-          if (filteredStudents.isEmpty && searchQuery.isEmpty) {
-            _filterStudents("");
+          // 🔥 DÜZELTİLMİŞ: İlk yüklemede filtrelemeyi bir sonraki frame'de yap
+          if (_isInitialLoad) {
+            _isInitialLoad = false;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _applyFilter();
+            });
           }
 
           return Column(
@@ -365,6 +213,7 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
                   ),
                 ),
               ),
+              // 🔥 Filtre butonları (şimdilik pasif, istersen aktifleştir)
               SizedBox(
                 height: 50,
                 child: ListView(
@@ -379,7 +228,25 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
               const SizedBox(height: 10),
               Expanded(
                 child: filteredStudents.isEmpty
-                    ? const Center(child: Text("Öğrenci bulunamadı."))
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.people_outline,
+                              size: 64,
+                              color: Colors.grey.shade400,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              searchQuery.isEmpty
+                                  ? "Gruba eklenebilecek öğrenci bulunamadı."
+                                  : "Aranan kriterde öğrenci yok",
+                              style: TextStyle(color: Colors.grey.shade600),
+                            ),
+                          ],
+                        ),
+                      )
                     : ListView.builder(
                         itemCount: filteredStudents.length,
                         itemBuilder: (context, index) {
@@ -392,21 +259,32 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
+                            elevation: 2,
                             child: ListTile(
                               leading: CircleAvatar(
                                 backgroundColor: Colors.indigo.shade50,
-                                child: const Icon(
-                                  Icons.person,
-                                  color: Colors.indigo,
+                                child: Text(
+                                  s.first_name.isNotEmpty
+                                      ? s.first_name[0].toUpperCase()
+                                      : "?",
+                                  style: const TextStyle(
+                                    color: Colors.indigo,
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
                               ),
-                              title: Text("${s.first_name} ${s.last_name}"),
+                              title: Text(
+                                "${s.first_name} ${s.last_name}",
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
                               subtitle: Text(s.phone),
                               trailing: IconButton(
                                 icon: const Icon(
                                   Icons.add_circle,
                                   color: Colors.green,
-                                  size: 30,
+                                  size: 32,
                                 ),
                                 onPressed: () => _assignStudent(s),
                               ),
@@ -428,7 +306,12 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
       child: ActionChip(
         avatar: Icon(icon, size: 18, color: color),
         label: Text(label),
-        onPressed: () {},
+        onPressed: () {
+          // 🔥 Filtreleme butonları için (ileride eklenebilir)
+          if (label == "Tümü") {
+            _filterStudents("");
+          }
+        },
         backgroundColor: Colors.white,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),

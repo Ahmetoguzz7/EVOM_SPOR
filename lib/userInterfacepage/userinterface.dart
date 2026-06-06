@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:EVOM_SPOR/datapage/data_page/data.dart';
 import 'package:EVOM_SPOR/datapage/fetch_data_page.dart';
 import 'package:EVOM_SPOR/main.dart';
@@ -34,101 +35,158 @@ class _PersonalTrainerState extends State<PersonalTrainer> {
   bool _isLoading = true;
   String? _error;
 
+  // Öğrenci sayıları için cache
+  Map<String, int> _studentCountByGroup = {};
+
+  // =========================================================================
+  // 🔥 TÜRKÇE TARİH FONKSİYONLARI
+  // =========================================================================
+
+  String _formatRelativeDateTurkish(String? dateStr) {
+    if (dateStr == null || dateStr.isEmpty) return "Şimdi";
+    try {
+      final date = DateTime.parse(dateStr);
+      final now = DateTime.now();
+      final diff = now.difference(date);
+
+      if (diff.inDays > 30) {
+        final formatter = DateFormat('dd MMM yyyy', 'tr_TR');
+        return formatter.format(date);
+      }
+      if (diff.inDays > 0) {
+        if (diff.inDays == 1) return "Dün";
+        return "${diff.inDays} gün önce";
+      }
+      if (diff.inHours > 0) {
+        return "${diff.inHours} saat önce";
+      }
+      if (diff.inMinutes > 0) {
+        return "${diff.inMinutes} dakika önce";
+      }
+      return "Az önce";
+    } catch (e) {
+      return "Şimdi";
+    }
+  }
+
+  String _formatDateLongTurkish(String dateStr) {
+    if (dateStr.isEmpty) return "Belirtilmemiş";
+    try {
+      final date = DateTime.parse(dateStr);
+      final formatter = DateFormat('dd MMMM yyyy', 'tr_TR');
+      return formatter.format(date);
+    } catch (e) {
+      return dateStr.split('T')[0];
+    }
+  }
+
   @override
   void initState() {
     super.initState();
-    // Sayfa hemen açılsın, veriler arka planda yüklensin
+    // 🔥 HEMEN YÜKLEMEYE BAŞLA
     _loadDataInBackground();
   }
 
-  // 🔥 ARKA PLANDA VERİ YÜKLE (Sayfa hemen açılır)
+  // 🚀 MAKSİMUM HIZLANDIRILMIŞ VERİ YÜKLEME
   Future<void> _loadDataInBackground() async {
     try {
-      // 1. Antrenörün gruplarını çek
-      final myGroups = await GoogleSheetService.getGroupsByCoach(
-        widget.coachData.coach_id,
-      );
+      // 🔥 TÜM VERİLERİ TEK SEFERDE PARALEL ÇEK (5 işlem aynı anda!)
+      final results = await Future.wait([
+        GoogleSheetService.getGroupsCached(),
+        GoogleSheetService.getGroupStudentsCached(),
+        GoogleSheetService.getUsersCached(),
+        GoogleSheetService.getPaymentsCached(),
+        GoogleSheetService.getNotifications(userId: widget.users.app),
+      ]);
 
-      // 2. Gruplardaki öğrenci ID'lerini bul
-      List<String> studentIds = [];
-      for (var group in myGroups) {
-        final groupStudents =
-            await GoogleSheetService.getGroupStudentsByGroupId(group.groups_id);
-        studentIds.addAll(
-          groupStudents
-              .where((gs) => gs.is_active == "TRUE")
-              .map((gs) => gs.student_id)
-              .toList(),
-        );
+      final allGroups = results[0] as List<Group>;
+      final allRelations = results[1] as List<GroupStudent>;
+      final allUsers = results[2] as List<Users>;
+      final allPayments = results[3] as List<Payment>;
+      final allNotifications = results[4] as List<Notifications>;
+
+      // 🔥 Antrenörün gruplarını filtrele (tek satırda)
+      final myGroups = allGroups
+          .where((g) => g.coach_id == widget.coachData.coach_id)
+          .toList();
+
+      // 🔥 Grup ID'lerini al
+      final groupIds = myGroups.map((g) => g.groups_id).toSet().toList();
+
+      // 🔥 Öğrenci ID'lerini bul (tek sorguda)
+      final studentIds = allRelations
+          .where(
+            (r) =>
+                groupIds.contains(r.groups_id) &&
+                r.is_active.toString().toUpperCase() == "TRUE",
+          )
+          .map((r) => r.student_id)
+          .toSet()
+          .toList();
+
+      // 🔥 Her gruptaki öğrenci sayısını hesapla (tek döngü)
+      final Map<String, int> studentCount = {};
+      for (var groupId in groupIds) {
+        studentCount[groupId] = allRelations
+            .where(
+              (r) =>
+                  r.groups_id == groupId &&
+                  r.is_active.toString().toUpperCase() == "TRUE",
+            )
+            .length;
       }
-      studentIds = studentIds.toSet().toList();
 
-      // 3. Öğrenci bilgilerini çek
-      final allUsers = await GoogleSheetService.getUsers();
+      // 🔥 Öğrenci bilgilerini filtrele
       final myStudents = allUsers
           .where((u) => studentIds.contains(u.app))
           .toList();
 
-      // 4. Öğrencilere ait ödemeleri çek
-      final allPayments = await GoogleSheetService.getPayments();
+      // 🔥 Ödemeleri filtrele
       final myPayments = allPayments
           .where((p) => studentIds.contains(p.student_id))
           .toList();
 
-      // 5. TÜM DUYURULARI ÇEK
-      final allNotifications = await GoogleSheetService.getNotifications(
-        userId: widget.users.app,
-      );
-
-      // Kullanıcının gruplarını bul (filtreleme için)
-      List<String> userGroups = myGroups
-          .map((g) => g.groups_id.toString())
-          .toList();
-
-      // Duyuruları filtrele (herkese açık veya gruba özel)
-      final filteredNotifications = allNotifications.where((d) {
-        final recipientId = d.recipient_id?.toString() ?? "";
-        if (recipientId == "all" ||
-            recipientId == "Tümü" ||
-            recipientId == "ALL")
-          return true;
-        if (recipientId.isNotEmpty && userGroups.contains(recipientId))
-          return true;
-        return false;
-      }).toList();
-
-      // SON 7 GÜN İÇİNDEKİ DUYURULARI FİLTRELE
+      // 🔥 DUYURULARI FİLTRELE (SON 7 GÜN - HIZLI)
       final now = DateTime.now();
       final sevenDaysAgo = now.subtract(const Duration(days: 7));
+      final groupIdSet = groupIds.toSet();
 
-      final recentNotifications = filteredNotifications.where((n) {
-        final date = _parseDate(n.sent_at);
-        return date.isAfter(sevenDaysAgo);
-      }).toList();
+      final recentNotifications = allNotifications
+          .where((d) {
+            final recipientId = d.recipient_id?.toString() ?? "";
+            if (recipientId == "all" ||
+                recipientId == "Tümü" ||
+                recipientId == "ALL") {
+              return true;
+            }
+            if (recipientId.isNotEmpty && groupIdSet.contains(recipientId)) {
+              return true;
+            }
+            return false;
+          })
+          .where((n) {
+            final date = _parseDate(n.sent_at);
+            return date.isAfter(sevenDaysAgo);
+          })
+          .toList();
 
-      // Tarihe göre sırala (en yeni en üstte)
-      recentNotifications.sort((a, b) {
-        final dateA = _parseDate(a.sent_at);
-        final dateB = _parseDate(b.sent_at);
-        return dateB.compareTo(dateA);
-      });
+      recentNotifications.sort(
+        (a, b) => _parseDate(b.sent_at).compareTo(_parseDate(a.sent_at)),
+      );
 
-      // EN FAZLA 3 DUYURU GÖSTER
-      final topNotifications = recentNotifications.take(3).toList();
-
-      // State'i güncelle
       if (mounted) {
         setState(() {
           _myGroups = myGroups;
           _myStudents = myStudents;
           _myPayments = myPayments;
-          _recentNotifications = topNotifications;
+          _studentCountByGroup = studentCount;
+          _recentNotifications = recentNotifications.take(3).toList();
           _allNotificationsCount = recentNotifications.length;
           _isLoading = false;
         });
       }
     } catch (e) {
-      print("Veri yükleme hatası: $e");
+      print("❌ Veri yükleme hatası: $e");
       if (mounted) {
         setState(() {
           _error = e.toString();
@@ -159,27 +217,13 @@ class _PersonalTrainerState extends State<PersonalTrainer> {
     );
   }
 
-  String _formatDate(String? dateStr) {
-    if (dateStr == null || dateStr.isEmpty) return "Şimdi";
-    try {
-      final date = DateTime.parse(dateStr);
-      final now = DateTime.now();
-      final diff = now.difference(date);
-      if (diff.inDays > 0) return "${diff.inDays} gün önce";
-      if (diff.inHours > 0) return "${diff.inHours} saat önce";
-      if (diff.inMinutes > 0) return "${diff.inMinutes} dakika önce";
-      return "Şimdi";
-    } catch (e) {
-      return "Şimdi";
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF1F5F9),
       body: RefreshIndicator(
         onRefresh: () async {
+          GoogleSheetService.invalidateAllCache();
           setState(() {
             _isLoading = true;
             _error = null;
@@ -197,13 +241,10 @@ class _PersonalTrainerState extends State<PersonalTrainer> {
               leading: IconButton(
                 icon: const Icon(Icons.logout, color: Colors.redAccent),
                 onPressed: () async {
-                  // TÜM KAYITLI BİLGİLERİ TEMİZLE
                   final prefs = await SharedPreferences.getInstance();
                   await prefs.remove('saved_email');
                   await prefs.remove('saved_password');
                   await prefs.setBool('remember_me', false);
-
-                  // TÜM SAYFALARI TEMİZLE, LOGIN'E YÖNLENDİR
                   Navigator.pushAndRemoveUntil(
                     context,
                     MaterialPageRoute(builder: (_) => const UnifiedLoginPage()),
@@ -267,17 +308,13 @@ class _PersonalTrainerState extends State<PersonalTrainer> {
                     ),
                     const SizedBox(height: 20),
 
-                    // 🔥 YÜKLEME DURUMUNA GÖRE İÇERİK
                     if (_isLoading)
                       _buildLoadingSection()
                     else if (_error != null)
                       _buildErrorSection()
-                    else ...[
-                      // Son 7 günün duyuruları
-                      if (_recentNotifications.isNotEmpty) ...[
-                        _buildNotificationsSection(),
-                        const SizedBox(height: 20),
-                      ],
+                    else if (_recentNotifications.isNotEmpty) ...[
+                      _buildNotificationsSection(),
+                      const SizedBox(height: 20),
                     ],
                   ],
                 ),
@@ -290,14 +327,8 @@ class _PersonalTrainerState extends State<PersonalTrainer> {
     );
   }
 
-  // 🔥 YÜKLEME ESNASINDA GÖSTERİLECEK ALAN
   Widget _buildLoadingSection() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(16),
-      ),
+    return Center(
       child: Column(
         children: [
           const SizedBox(
@@ -318,15 +349,8 @@ class _PersonalTrainerState extends State<PersonalTrainer> {
     );
   }
 
-  // 🔥 HATA ESNASINDA GÖSTERİLECEK ALAN
   Widget _buildErrorSection() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.red.shade50,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.red.shade200),
-      ),
+    return Center(
       child: Column(
         children: [
           Icon(Icons.error_outline, color: Colors.red.shade400, size: 40),
@@ -351,7 +375,6 @@ class _PersonalTrainerState extends State<PersonalTrainer> {
     );
   }
 
-  // 🔥 DUYURULAR BÖLÜMÜ
   Widget _buildNotificationsSection() {
     return Container(
       padding: const EdgeInsets.all(12),
@@ -505,7 +528,7 @@ class _PersonalTrainerState extends State<PersonalTrainer> {
             ),
           ),
           Text(
-            _formatDate(notif.sent_at),
+            _formatRelativeDateTurkish(notif.sent_at),
             style: TextStyle(fontSize: 9, color: Colors.grey[500]),
           ),
         ],
@@ -514,6 +537,8 @@ class _PersonalTrainerState extends State<PersonalTrainer> {
   }
 
   Widget _buildHeader() {
+    final totalStudents = _myStudents.length;
+
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -619,7 +644,7 @@ class _PersonalTrainerState extends State<PersonalTrainer> {
               Row(
                 children: [
                   _buildStatCard(
-                    _myStudents.length,
+                    totalStudents,
                     "ÖĞRENCİ",
                     Icons.people,
                     Colors.blue,
@@ -630,13 +655,6 @@ class _PersonalTrainerState extends State<PersonalTrainer> {
                     "GRUP",
                     Icons.group,
                     Colors.green,
-                  ),
-                  const SizedBox(width: 10),
-                  _buildStatCard(
-                    _myPayments.length,
-                    "ÖDEME",
-                    Icons.payments,
-                    Colors.orange,
                   ),
                 ],
               ),
@@ -757,7 +775,7 @@ class _PersonalTrainerState extends State<PersonalTrainer> {
             _infoRow(
               Icons.calendar_today,
               "İşe Başlangıç",
-              widget.coachData.hired_at.toString().split('T')[0],
+              _formatDateLongTurkish(widget.coachData.hired_at),
             ),
             const Divider(),
             _infoRow(Icons.info, "Hakkımda", widget.coachData.bio),

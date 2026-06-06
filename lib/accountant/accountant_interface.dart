@@ -1,8 +1,9 @@
-// AccountantInterface.dart - DÜZELTİLMİŞ VERSİYON (role göre)
+// AccountantInterface.dart - DÜZELTİLMİŞ VERSİYON
 
+import 'package:EVOM_SPOR/managerpage/antremanprogram.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:EVOM_SPOR/accountant/account_payment_takip.dart';
+import 'package:EVOM_SPOR/managerpage/payment_history.dart';
 import 'package:EVOM_SPOR/datapage/data_page/data.dart';
 import 'package:EVOM_SPOR/datapage/fetch_data_page.dart';
 import 'package:EVOM_SPOR/managerpage/loginpage/login.dart';
@@ -31,32 +32,57 @@ class AccountantInterface extends StatefulWidget {
 class _AccountantInterfaceState extends State<AccountantInterface> {
   late Future<Map<String, dynamic>> _dashboardData;
 
+  // Antrenman programı için değişkenler
+  List<Group> _allGroups = [];
+  List<GroupStudent> _allRelations = [];
+  List<Users> _allStudents = [];
+
   @override
   void initState() {
     super.initState();
-    _dashboardData = _loadAllData();
+    _dashboardData = _loadAllDataParallel();
   }
 
-  Future<Map<String, dynamic>> _loadAllData() async {
-    try {
-      final students = await GoogleSheetService.getStudents();
-      final coaches = await GoogleSheetService.getCoachesOnlyCached();
-      final groups = await GoogleSheetService.getGroupsCached();
-      final allUsers = await GoogleSheetService.getUsersCached();
-      final payments = await GoogleSheetService.getPaymentsCached();
+  // PARALEL VERİ ÇEKME
+  Future<Map<String, dynamic>> _loadAllDataParallel() async {
+    final stopwatch = Stopwatch()..start();
 
-      // 🔥 DÜZELTİLDİ: role göre filtreleme (is_active DEĞİL!)
+    try {
+      final results = await Future.wait([
+        GoogleSheetService.getStudents(),
+        GoogleSheetService.getCoachesOnlyCached(),
+        GoogleSheetService.getGroupsCached(),
+        GoogleSheetService.getUsersCached(),
+        GoogleSheetService.getPaymentsCached(),
+        GoogleSheetService.getGroupStudentsCached(),
+        GoogleSheetService.getNotifications(userId: "all"),
+      ]);
+
+      final students = results[0] as List<Users>;
+      final coaches = results[1] as List<Coach>;
+      final groups = results[2] as List<Group>;
+      final allUsers = results[3] as List<Users>;
+      final payments = results[4] as List<Payment>;
+      final relations = results[5] as List<GroupStudent>;
+      final allNotifications = results[6] as List<Notifications>;
+
+      stopwatch.stop();
+      print(
+        "⏱️ Tüm veriler PARALEL olarak ${stopwatch.elapsedMilliseconds}ms'de yüklendi",
+      );
+
+      _allGroups = groups;
+      _allRelations = relations;
+      _allStudents = students;
+
       final totalStudents = students
           .where((s) => s.role.toLowerCase() == "student")
           .length;
 
-      // Debug için
-      print("Toplam öğrenci (role=student): $totalStudents");
-      print("Toplam öğrenci listesi: ${students.length}");
-
       final now = DateTime.now();
       final currentMonth =
           "${now.year}-${now.month.toString().padLeft(2, '0')}";
+
       double income = 0;
       for (var p in payments) {
         if (p.status == "paid" && p.due_date.startsWith(currentMonth)) {
@@ -64,9 +90,6 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
         }
       }
 
-      final allNotifications = await GoogleSheetService.getNotifications(
-        userId: "all",
-      );
       final sevenDaysAgo = now.subtract(const Duration(days: 7));
       final recent = allNotifications.where((n) {
         try {
@@ -131,7 +154,7 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
         'upcomingBirthdays': birthdays,
       };
     } catch (e) {
-      print("Veri yükleme hatası: $e");
+      print("❌ Veri yükleme hatası: $e");
       return {
         'totalStudents': 0,
         'totalCoaches': 0,
@@ -164,6 +187,141 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
     return "$days gün sonra";
   }
 
+  List<Users> _getTodaysStudents() {
+    final todayName = _getTodayName();
+    final todayGroups = <String>[];
+
+    for (var group in _allGroups) {
+      if (group.schedule.contains(todayName)) {
+        todayGroups.add(group.groups_id);
+      }
+    }
+
+    final students = <Users>[];
+    for (var groupId in todayGroups) {
+      final studentIds = _allRelations
+          .where((r) => r.groups_id == groupId && r.is_active == "TRUE")
+          .map((r) => r.student_id)
+          .toList();
+      students.addAll(_allStudents.where((s) => studentIds.contains(s.app)));
+    }
+
+    return students.toSet().toList();
+  }
+
+  String _getTodayName() {
+    final days = [
+      "Pazartesi",
+      "Salı",
+      "Çarşamba",
+      "Perşembe",
+      "Cuma",
+      "Cumartesi",
+      "Pazar",
+    ];
+    final now = DateTime.now();
+    return days[now.weekday - 1];
+  }
+
+  Widget _buildTodayTrainingCard() {
+    final todaysStudents = _getTodaysStudents();
+
+    if (todaysStudents.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.sports, color: Colors.orange, size: 20),
+              SizedBox(width: 8),
+              Text(
+                "🏃 Bugün Antrenmanı Olanlar",
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ...todaysStudents
+              .take(3)
+              .map(
+                (student) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 16,
+                        backgroundColor: Colors.orange.shade100,
+                        child: Text(
+                          student.first_name[0].toUpperCase(),
+                          style: const TextStyle(
+                            color: Colors.orange,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          "${student.first_name} ${student.last_name}",
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.shade50,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          "Bugün",
+                          style: TextStyle(
+                            color: Colors.orange.shade700,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          if (todaysStudents.length > 3)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                "+ ${todaysStudents.length - 3} öğrenci daha",
+                style: TextStyle(color: Colors.grey.shade500, fontSize: 11),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -172,7 +330,7 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
         backgroundColor: Colors.white,
         elevation: 0,
         title: const Text(
-          "Sports Arena - Muhasebe",
+          "EVOM_SPOR",
           style: TextStyle(
             color: Colors.black87,
             fontWeight: FontWeight.bold,
@@ -218,7 +376,7 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
           return RefreshIndicator(
             onRefresh: () async {
               setState(() {
-                _dashboardData = _loadAllData();
+                _dashboardData = _loadAllDataParallel();
               });
               await _dashboardData;
             },
@@ -231,12 +389,13 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
                   const SizedBox(height: 12),
                   _buildStatsRow2(totalGroups, monthlyIncome),
                   const SizedBox(height: 20),
+                  _buildTodayTrainingCard(),
                   _buildAnnouncementsCard(recentNotifications),
                   const SizedBox(height: 16),
                   _buildBirthdaysCard(upcomingBirthdays),
                   const SizedBox(height: 24),
                   const Text(
-                    "Muhasebe Menüsü",
+                    "Yönetim Menüsü",
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 12),
@@ -286,10 +445,11 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
                         ),
                       ],
                     ),
-                    child: const Icon(
-                      Icons.sports_basketball,
-                      size: 55,
-                      color: Colors.white,
+                    child: Image.asset(
+                      'assets/images/sports.png',
+                      width: 80,
+                      height: 80,
+                      fit: BoxFit.contain,
                     ),
                   ),
                 );
@@ -297,7 +457,7 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
             ),
             const SizedBox(height: 30),
             const Text(
-              "EVOM SPOR - MUHASEBE",
+              " EVOM SPOR - Muhasebeci Girişi",
               style: TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
@@ -369,7 +529,7 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
               ),
               onPressed: () {
                 setState(() {
-                  _dashboardData = _loadAllData();
+                  _dashboardData = _loadAllDataParallel();
                 });
               },
               child: const Text(
@@ -418,15 +578,6 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
             Colors.green,
           ),
         ),
-        /* const SizedBox(width: 12),
-        Expanded(
-          child: _buildStatCard(
-            "Aylık Gelir",
-            "${monthlyIncome.toStringAsFixed(0)}₺",
-            Icons.attach_money,
-            Colors.teal,
-          ),
-        ),*/
       ],
     );
   }
@@ -691,7 +842,59 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
     );
   }
 
+  // 🔥 MENU GRID - Admin kontrolü YOK, herkes aynısını görür
   Widget _buildMenuGrid() {
+    final List<Map<String, dynamic>> allMenus = [
+      {
+        "title": "Öğrenci & Ödeme",
+        "icon": Icons.search,
+        "color": Colors.teal,
+        "route": "student_search",
+      },
+      {
+        "title": "Yoklama Al",
+        "icon": Icons.fact_check,
+        "color": Colors.orange,
+        "route": "attendance",
+      },
+      {
+        "title": "Duyuru Gönder",
+        "icon": Icons.campaign,
+        "color": Colors.purple,
+        "route": "notification",
+      },
+      {
+        "title": "Ödeme Hatırlatma",
+        "icon": Icons.notifications_active,
+        "color": Colors.red,
+        "route": "payment_reminder",
+      },
+      {
+        "title": "Antrenman Programı",
+        "icon": Icons.calendar_month,
+        "color": Colors.teal,
+        "route": "training_schedule",
+      },
+      {
+        "title": "Kayıt Oluştur",
+        "icon": Icons.person_add,
+        "color": Colors.green,
+        "route": "register",
+      },
+      {
+        "title": "Grup Yönetimi",
+        "icon": Icons.groups,
+        "color": Colors.blue,
+        "route": "group",
+      },
+      {
+        "title": "Raporlar",
+        "icon": Icons.bar_chart,
+        "color": Colors.indigo,
+        "route": "reports",
+      },
+    ];
+
     return GridView.count(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -699,85 +902,14 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
       crossAxisSpacing: 12,
       mainAxisSpacing: 12,
       childAspectRatio: 1.1,
-      children: [
-        _menuCard("Öğrenci & Ödeme", Icons.search, Colors.teal, () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) =>
-                  StudentSearchScreen(currentUser: widget.currentUser),
-            ),
-          );
-        }),
-        _menuCard("Yoklama Al", Icons.fact_check, Colors.orange, () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => TakeAttendanceScreen(
-                currentUser:
-                    widget.currentUser ??
-                    Users(
-                      app: "",
-                      branches_id: "",
-                      first_name: "Accountant",
-                      last_name: "",
-                      email: "",
-                      phone: "",
-                      password_hash: "",
-                      role: "Accountant",
-                      profile_photo_url: "",
-                      amount: "",
-                      b_date: "",
-                      created_at: "",
-                      last_login: "",
-                      is_active: "",
-                    ),
-              ),
-            ),
-          );
-        }),
-        _menuCard("Duyuru Gönder", Icons.campaign, Colors.purple, () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) =>
-                  NotificationsScreen(currentUser: widget.currentUser),
-            ),
-          );
-        }),
-        if (widget.currentUserRole == 'accountant')
-          _menuCard("Grup Yönetimi", Icons.groups, Colors.blue, () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => GroupManagementScreen()),
-            );
-          }),
-        _menuCard("Kayıt Oluştur", Icons.person_add, Colors.green, () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => AdvancedSignUpPage()),
-          );
-        }),
-        //eklenecek
-        _menuCard(
-          "Son 10 Gün - Ödemeyenler",
-          Icons.bar_chart,
-          Colors.indigo,
-          () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => DebtAlertScreen(
-                  students: [],
-                  allPayments: [],
-                  allGroups: [],
-                  allRelations: [],
-                ),
-              ),
-            );
-          },
-        ),
-      ],
+      children: allMenus.map((menu) {
+        return _menuCard(
+          menu["title"],
+          menu["icon"],
+          menu["color"],
+          () => _navigateToRoute(menu["route"]),
+        );
+      }).toList(),
     );
   }
 
@@ -824,5 +956,104 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
         ),
       ),
     );
+  }
+
+  Future<void> _navigateToRoute(String route) async {
+    switch (route) {
+      case "student_search":
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) =>
+                StudentSearchScreen(currentUser: widget.currentUser),
+          ),
+        );
+        break;
+      case "attendance":
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => TakeAttendanceScreen(
+              currentUser:
+                  widget.currentUser ??
+                  Users(
+                    app: "",
+                    branches_id: "",
+                    first_name: "Admin",
+                    last_name: "",
+                    email: "",
+                    phone: "",
+                    password_hash: "",
+                    role: "admin",
+                    profile_photo_url: "",
+                    amount: "",
+                    b_date: "",
+                    created_at: "",
+                    last_login: "",
+                    is_active: "",
+                  ),
+            ),
+          ),
+        );
+        break;
+      case "notification":
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) =>
+                NotificationsScreen(currentUser: widget.currentUser),
+          ),
+        );
+        break;
+      case "payment_reminder":
+        final allStudents = await GoogleSheetService.getStudentsOnlyCached();
+        final allPayments = await GoogleSheetService.getPaymentsCached();
+        if (!context.mounted) return;
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => PaymentReminderScreen(
+              students: allStudents,
+              allPayments: allPayments,
+              groups: [],
+              groupStudents: [],
+            ),
+          ),
+        );
+        break;
+      case "training_schedule":
+        final allStudents = await GoogleSheetService.getStudentsOnlyCached();
+        final allGroups = await GoogleSheetService.getGroupsCached();
+        final allRelations = await GoogleSheetService.getGroupStudentsCached();
+        if (!context.mounted) return;
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => WeeklyTrainingScreen(
+              groups: allGroups,
+              relations: allRelations,
+              students: allStudents,
+            ),
+          ),
+        );
+        break;
+      case "group":
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => GroupManagementScreen()),
+        );
+        break;
+      case "register":
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => AdvancedSignUpPage()),
+        );
+        break;
+      case "reports":
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Raporlar özelliği yakında...")),
+        );
+        break;
+    }
   }
 }

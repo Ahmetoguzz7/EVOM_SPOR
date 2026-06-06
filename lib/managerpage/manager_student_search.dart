@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+/*import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:EVOM_SPOR/datapage/data_page/data.dart';
 import 'package:EVOM_SPOR/datapage/fetch_data_page.dart';
@@ -6,7 +6,6 @@ import 'package:EVOM_SPOR/managerpage/manager_payment_dekont.dart';
 
 class StudentSearchScreen extends StatefulWidget {
   final Users? currentUser;
-
   const StudentSearchScreen({Key? key, this.currentUser}) : super(key: key);
 
   @override
@@ -28,8 +27,31 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
 
   List<String> groupNames = ["Tümü"];
   List<String> monthOptions = [];
-
   String searchQuery = "";
+
+  int _paidCount = 0;
+  int _partialCount = 0;
+  int _unpaidCount = 0;
+
+  // 🔥 CACHE MEKANİZMASI
+  final Map<String, double> _feeCache = {};
+  final Map<String, double> _paidCache = {};
+  final Map<String, String> _statusCache = {};
+  final Map<String, String> _groupNameCache = {};
+
+  // 🔥 MODERN BEYAZ TEMA
+  static const Color _bg = Color(0xFFF8FAFC);
+  static const Color _surface = Colors.white;
+  static const Color _surfaceLight = Color(0xFFF1F5F9);
+  static const Color _accent = Color(0xFF0EA5E9);
+  static const Color _accentDark = Color(0xFF0284C7);
+  static const Color _textPrimary = Color(0xFF0F172A);
+  static const Color _textSecondary = Color(0xFF64748B);
+  static const Color _textTertiary = Color(0xFF94A3B8);
+  static const Color _green = Color(0xFF22C55E);
+  static const Color _orange = Color(0xFFF97316);
+  static const Color _red = Color(0xFFEF4444);
+  static const Color _border = Color(0xFFE2E8F0);
 
   @override
   void initState() {
@@ -37,136 +59,214 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
     _loadAllData();
   }
 
-  Future<void> _loadAllData() async {
+  @override
+  void dispose() {
+    _feeCache.clear();
+    _paidCache.clear();
+    _statusCache.clear();
+    _groupNameCache.clear();
+    super.dispose();
+  }
+
+  // 🔥 ASYNC YÜKLEME - UI KİTLENMEZ
+  void _loadAllData() {
     setState(() => isLoading = true);
-    try {
-      final results = await Future.wait([
-        GoogleSheetService.getStudentsOnlyCached(),
-        GoogleSheetService.getPaymentsCached(),
-        GoogleSheetService.getGroupsCached(),
-        GoogleSheetService.getGroupStudentsCached(),
-      ]);
 
-      allStudents = results[0] as List<Users>;
-      allPayments = results[1] as List<Payment>;
-      allGroups = results[2] as List<Group>;
-      allRelations = results[3] as List<GroupStudent>;
+    Future.microtask(() async {
+      _feeCache.clear();
+      _paidCache.clear();
+      _statusCache.clear();
+      _groupNameCache.clear();
 
-      _prepareFilters();
-      _applyFilters();
+      try {
+        final results = await Future.wait([
+          GoogleSheetService.getStudentsOnlyCached(),
+          GoogleSheetService.getPaymentsCached(),
+          GoogleSheetService.getGroupsCached(),
+          GoogleSheetService.getGroupStudentsCached(),
+        ]);
 
-      setState(() => isLoading = false);
-    } catch (e) {
-      setState(() => isLoading = false);
-    }
+        allStudents = results[0] as List<Users>;
+        allPayments = results[1] as List<Payment>;
+        allGroups = results[2] as List<Group>;
+        allRelations = results[3] as List<GroupStudent>;
+
+        _prepareFilters();
+        _updateCounts();
+        _applyFilters();
+
+        if (mounted) setState(() => isLoading = false);
+      } catch (_) {
+        if (mounted) setState(() => isLoading = false);
+      }
+    });
   }
 
   void _prepareFilters() {
-    final Set<String> uniqueGroups = {};
-    for (var group in allGroups) {
-      uniqueGroups.add(group.name);
-    }
-    groupNames = ["Tümü", ...uniqueGroups.toList()];
-
+    groupNames = ["Tümü", ...allGroups.map((g) => g.name).toSet()];
     final now = DateTime.now();
     monthOptions.clear();
     for (int i = -6; i <= 6; i++) {
-      final date = DateTime(now.year, now.month + i);
-      monthOptions.add(DateFormat('yyyy-MM').format(date));
+      monthOptions.add(
+        DateFormat('yyyy-MM').format(DateTime(now.year, now.month + i)),
+      );
     }
     selectedMonthFilter = monthOptions[6];
   }
 
-  String _getMonthName(int month) {
-    const months = [
-      "Ocak",
-      "Şubat",
-      "Mart",
-      "Nisan",
-      "Mayıs",
-      "Haziran",
-      "Temmuz",
-      "Ağustos",
-      "Eylül",
-      "Ekim",
-      "Kasım",
-      "Aralık",
-    ];
-    return months[month - 1];
+  String _getCachedGroupName(String studentId) {
+    if (_groupNameCache.containsKey(studentId))
+      return _groupNameCache[studentId]!;
+    final name = _getStudentGroupName(studentId);
+    _groupNameCache[studentId] = name;
+    return name;
   }
 
-  int _getMonthNumber(String monthName) {
-    switch (monthName) {
-      case "Ocak":
-        return 1;
-      case "Şubat":
-        return 2;
-      case "Mart":
-        return 3;
-      case "Nisan":
-        return 4;
-      case "Mayıs":
-        return 5;
-      case "Haziran":
-        return 6;
-      case "Temmuz":
-        return 7;
-      case "Ağustos":
-        return 8;
-      case "Eylül":
-        return 9;
-      case "Ekim":
-        return 10;
-      case "Kasım":
-        return 11;
-      case "Aralık":
-        return 12;
-      default:
-        return 1;
+  double _getCachedFee(String studentId) {
+    if (_feeCache.containsKey(studentId)) return _feeCache[studentId]!;
+    final fee = _getStudentMonthlyFee(studentId);
+    _feeCache[studentId] = fee;
+    return fee;
+  }
+
+  double _getCachedPaid(String studentId) {
+    if (_paidCache.containsKey(studentId)) return _paidCache[studentId]!;
+    final paid = _getStudentTotalPaid(studentId, selectedMonthFilter);
+    _paidCache[studentId] = paid;
+    return paid;
+  }
+
+  String _getCachedStatus(String studentId) {
+    if (_statusCache.containsKey(studentId)) return _statusCache[studentId]!;
+    final status = _getPaymentStatus(studentId, selectedMonthFilter);
+    _statusCache[studentId] = status;
+    return status;
+  }
+
+  void _updateCounts() {
+    int paid = 0, partial = 0, unpaid = 0;
+    _paidCache.clear();
+    _statusCache.clear();
+
+    for (var s in allStudents) {
+      if (selectedGroupFilter != "Tümü" &&
+          _getCachedGroupName(s.app) != selectedGroupFilter)
+        continue;
+      final status = _getCachedStatus(s.app);
+      switch (status) {
+        case "paid":
+          paid++;
+          break;
+        case "partial":
+          partial++;
+          break;
+        case "unpaid":
+          unpaid++;
+          break;
+      }
     }
+    setState(() {
+      _paidCount = paid;
+      _partialCount = partial;
+      _unpaidCount = unpaid;
+    });
   }
 
-  DateTime _parseMonthYear(String monthYear) {
-    final parts = monthYear.split(' ');
-    final month = _getMonthNumber(parts[0]);
-    final year = int.parse(parts[1]);
-    return DateTime(year, month);
+  String _getMonthName(int m) => [
+    "Ocak",
+    "Şubat",
+    "Mart",
+    "Nisan",
+    "Mayıs",
+    "Haziran",
+    "Temmuz",
+    "Ağustos",
+    "Eylül",
+    "Ekim",
+    "Kasım",
+    "Aralık",
+  ][m - 1];
+  /*
+  // Daha esnek aktiflik kontrolü
+  List<String> _getStudentGroups(String id) {
+    return allRelations
+        .where((r) {
+          final studentMatch = r.student_id == id;
+          final isActive = r.is_active.toString().toUpperCase();
+          // "TRUE", "1", "YES", "true" hepsini kabul et
+          final isReallyActive =
+              isActive == "TRUE" || isActive == "1" || isActive == "YES";
+          return studentMatch && isReallyActive;
+        })
+        .map((r) => r.groups_id)
+        .toList();
   }
 
-  List<String> _getStudentGroups(String studentId) {
-    final relations = allRelations
+  String _getStudentGroupName(String id) {
+    final gs = _getStudentGroups(id);
+    if (gs.isEmpty) return "Grup Yok";
+    return allGroups
+        .firstWhere(
+          (g) => g.groups_id == gs.first,
+          orElse: () => Group(
+            groups_id: "",
+            name: "Belirsiz",
+            coach_id: "",
+            branches_id: "",
+            sports_id: "",
+            schedule: "",
+            capacity: "",
+            monthly_fee: "",
+            is_active: "",
+          ),
+        )
+        .name;
+  }
+*/
+  // 🔥 YENİ - Doğrudan grup adını bul
+  String _getStudentGroupName(String studentId) {
+    // Öğrencinin grup ilişkilerini bul
+    final studentRelations = allRelations
         .where(
           (r) =>
-              r.student_id == studentId &&
-              r.is_active.toString().toUpperCase() == "TRUE",
+              r.student_id == studentId && r.is_active.toUpperCase() == "TRUE",
         )
         .toList();
-    return relations.map((r) => r.groups_id).toList();
-  }
 
-  String _getStudentGroupName(String studentId) {
-    final groups = _getStudentGroups(studentId);
-    if (groups.isEmpty) return "Grup Yok";
+    if (studentRelations.isEmpty) {
+      print("Öğrenci $studentId için aktif grup ilişkisi bulunamadı");
+      return "Grup Yok";
+    }
+
+    // İlk aktif grubun ID'sini al
+    final groupId = studentRelations.first.groups_id;
+
+    // Grup bilgisini bul
     final group = allGroups.firstWhere(
-      (g) => g.groups_id == groups.first,
-      orElse: () => Group(
-        groups_id: "",
-        name: "Belirsiz",
-        coach_id: "",
-        branches_id: "",
-        sports_id: "",
-        schedule: "",
-        capacity: "",
-        monthly_fee: "",
-        is_active: "",
-      ),
+      (g) => g.groups_id == groupId,
+      orElse: () {
+        print("Grup ID $groupId için grup bulunamadı");
+        return Group(
+          groups_id: "",
+          name: "Grup Yok",
+          coach_id: "",
+          branches_id: "",
+          sports_id: "",
+          schedule: "",
+          capacity: "",
+          monthly_fee: "",
+          is_active: "",
+        );
+      },
     );
-    return group.name;
+
+    print("Öğrenci: $studentId -> Grup: ${group.name} (ID: $groupId)");
+    return group.name.isEmpty ? "Grup Yok" : group.name;
   }
 
-  double _getStudentMonthlyFee(String studentId) {
-    final student = allStudents.firstWhere(
-      (s) => s.app == studentId,
+  double _getStudentMonthlyFee(String id) {
+    final s = allStudents.firstWhere(
+      (s) => s.app == id,
       orElse: () => Users(
         app: "",
         branches_id: "",
@@ -184,247 +284,294 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
         is_active: "",
       ),
     );
-    final fee = double.tryParse(student.amount) ?? 0;
-    return fee;
+    return double.tryParse(s.amount) ?? 0;
   }
 
-  double _getStudentTotalPaid(String studentId, String monthYear) {
+  double _getStudentTotalPaid(String id, String monthYear) {
     final parts = monthYear.split('-');
     if (parts.length != 2) return 0;
-
-    final targetYear = int.parse(parts[0]);
-    final targetMonth = int.parse(parts[1]);
-
+    final yr = int.parse(parts[0]);
+    final mo = int.parse(parts[1]);
     double total = 0;
-    for (var payment in allPayments) {
-      if (payment.student_id != studentId) continue;
-      final status = payment.status.toString().toUpperCase();
-      if (status != "PAID" && status != "TRUE") continue;
-
+    for (var p in allPayments) {
+      if (p.student_id != id) continue;
+      final st = p.status.toString().toUpperCase();
+      if (st != "PAID" && st != "TRUE") continue;
       try {
-        String dateStr = payment.paid_date;
-        if (dateStr.contains('T')) dateStr = dateStr.split('T')[0];
-        final paymentDate = DateTime.parse(dateStr);
-        if (paymentDate.year == targetYear &&
-            paymentDate.month == targetMonth) {
-          total += double.tryParse(payment.amount) ?? 0;
-        }
-      } catch (e) {}
+        final d = DateTime.parse(p.paid_date.split('T')[0]);
+        if (d.year == yr && d.month == mo)
+          total += double.tryParse(p.amount) ?? 0;
+      } catch (_) {}
     }
     return total;
   }
 
-  // 🔥 DURUM HESAPLAMA - DÜZELTİLDİ
-  String _getPaymentStatus(String studentId, String monthYear) {
-    final monthlyFee = _getStudentMonthlyFee(studentId);
-    final totalPaid = _getStudentTotalPaid(studentId, monthYear);
-
-    if (monthlyFee == 0) return "unknown";
-    if (totalPaid >= monthlyFee) return "paid";
-    if (totalPaid > 0 && totalPaid < monthlyFee) return "partial";
+  String _getPaymentStatus(String id, String monthYear) {
+    final fee = _getStudentMonthlyFee(id);
+    final paid = _getStudentTotalPaid(id, monthYear);
+    if (fee == 0) return "unknown";
+    if (paid >= fee) return "paid";
+    if (paid > 0) return "partial";
     return "unpaid";
   }
 
-  // 🔥 RENKLER - GÜNCELLENDİ
-  Color _getPaymentColor(String status) {
-    switch (status) {
-      case "paid":
-        return Colors.green;
-      case "partial":
-        return Colors.orange;
-      case "unpaid":
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
-  }
-
-  // 🔥 METİNLER - GÜNCELLENDİ
-  String _getPaymentText(String status) {
-    switch (status) {
-      case "paid":
-        return "Ödedi ✅";
-      case "partial":
-        return "Kısmi Ödedi ⚠️";
-      case "unpaid":
-        return "Ödemedi ❌";
-      default:
-        return "Belirsiz";
-    }
-  }
+  Color _statusColor(String s) => s == "paid"
+      ? _green
+      : s == "partial"
+      ? _orange
+      : _red;
+  String _statusLabel(String s) => s == "paid"
+      ? "Ödedi"
+      : s == "partial"
+      ? "Kısmi"
+      : "Ödemedi";
+  IconData _statusIcon(String s) => s == "paid"
+      ? Icons.check_circle_rounded
+      : s == "partial"
+      ? Icons.timelapse_rounded
+      : Icons.cancel_rounded;
 
   void _applyFilters() {
     setState(() {
-      filteredStudents = allStudents.where((student) {
-        if (searchQuery.isNotEmpty) {
-          final fullName = "${student.first_name} ${student.last_name}"
-              .toLowerCase();
-          if (!fullName.contains(searchQuery.toLowerCase())) return false;
-        }
-
-        if (selectedGroupFilter != "Tümü") {
-          final studentGroupName = _getStudentGroupName(student.app);
-          if (studentGroupName != selectedGroupFilter) return false;
-        }
-
+      filteredStudents = allStudents.where((s) {
+        if (searchQuery.isNotEmpty &&
+            !"${s.first_name} ${s.last_name}".toLowerCase().contains(
+              searchQuery.toLowerCase(),
+            ))
+          return false;
+        if (selectedGroupFilter != "Tümü" &&
+            _getCachedGroupName(s.app) != selectedGroupFilter)
+          return false;
         if (selectedPaymentFilter != "Tümü") {
-          final status = _getPaymentStatus(student.app, selectedMonthFilter);
-          if (selectedPaymentFilter == "Ödeyenler" && status != "paid")
+          final st = _getCachedStatus(s.app);
+          if (selectedPaymentFilter == "Ödeyenler" && st != "paid")
             return false;
-          if (selectedPaymentFilter == "Ödemeyenler" && status != "unpaid")
+          if (selectedPaymentFilter == "Ödemeyenler" && st != "unpaid")
             return false;
-          if (selectedPaymentFilter == "Kısmi Ödeyenler" && status != "partial")
+          if (selectedPaymentFilter == "Kısmi Ödeyenler" && st != "partial")
             return false;
         }
-
         return true;
       }).toList();
     });
   }
 
-  void _search(String query) {
-    searchQuery = query;
-    _applyFilters();
+  String _formatDate(String d) {
+    if (d.isEmpty) return "—";
+    try {
+      return DateFormat('dd/MM/yyyy').format(DateTime.parse(d.split('T')[0]));
+    } catch (_) {
+      return d;
+    }
   }
 
-  void _showPaymentDetail(Payment payment) {
+  void _showPaymentDetail(Payment p) {
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Ödeme Detayı"),
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: _accent.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(Icons.receipt_long, color: _accent, size: 26),
+            ),
+            const SizedBox(width: 14),
+            const Text(
+              "Ödeme Detayı",
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+            ),
+          ],
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              "Tutar: ${payment.amount} TL",
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            Text("Yöntem: ${payment.payment_method}"),
-            Text("Tarih: ${_formatDate(payment.paid_date)}"),
-            Text("Durum: ${payment.status}"),
-            if (payment.note.isNotEmpty) Text("Not: ${payment.note}"),
+            _dRow("Tutar", "${p.amount} TL", _green),
+            _dRow("Yöntem", p.payment_method, _accent),
+            _dRow("Tarih", _formatDate(p.paid_date), _orange),
+            if (p.note.isNotEmpty) _dRow("Not", p.note, _textSecondary),
           ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text("Kapat"),
+            onPressed: () => Navigator.pop(context),
+            style: TextButton.styleFrom(
+              backgroundColor: _accent.withOpacity(0.1),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            child: Text(
+              "Kapat",
+              style: TextStyle(color: _accent, fontWeight: FontWeight.bold),
+            ),
           ),
         ],
       ),
     );
   }
 
-  String _formatDate(String dateStr) {
-    if (dateStr.isEmpty) return "Belirsiz";
-    try {
-      String cleanDate = dateStr;
-      if (cleanDate.contains('T')) cleanDate = cleanDate.split('T')[0];
-      final date = DateTime.parse(cleanDate);
-      return DateFormat('dd/MM/yyyy').format(date);
-    } catch (e) {
-      return dateStr;
-    }
-  }
+  Widget _dRow(String label, String value, Color valueColor) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Row(
+      children: [
+        SizedBox(
+          width: 55,
+          child: Text(
+            label,
+            style: TextStyle(color: _textSecondary, fontSize: 13),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: TextStyle(
+              color: valueColor,
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 
   void _showPaymentHistory(Users student) {
-    Map<String, List<Payment>> paymentsByMonth = {};
-
-    for (var payment in allPayments.where((p) => p.student_id == student.app)) {
-      final status = payment.status.toString().toUpperCase();
-      if (status != "PAID" && status != "TRUE") continue;
-
+    Map<String, List<Payment>> byMonth = {};
+    for (var p in allPayments.where((p) => p.student_id == student.app)) {
+      final st = p.status.toString().toUpperCase();
+      if (st != "PAID" && st != "TRUE") continue;
       try {
-        String dateStr = payment.paid_date;
-        if (dateStr.contains('T')) dateStr = dateStr.split('T')[0];
-        final date = DateTime.parse(dateStr);
-        final monthKey = "${_getMonthName(date.month)} ${date.year}";
-
-        if (!paymentsByMonth.containsKey(monthKey)) {
-          paymentsByMonth[monthKey] = [];
-        }
-        paymentsByMonth[monthKey]!.add(payment);
-      } catch (e) {}
+        final d = DateTime.parse(p.paid_date.split('T')[0]);
+        (byMonth["${_getMonthName(d.month)} ${d.year}"] ??= []).add(p);
+      } catch (_) {}
     }
-
-    final sortedMonths = paymentsByMonth.keys.toList()
-      ..sort((a, b) => _parseMonthYear(b).compareTo(_parseMonthYear(a)));
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.7,
-        maxChildSize: 0.9,
-        minChildSize: 0.5,
-        expand: false,
-        builder: (context, scrollController) {
-          return Column(
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: DraggableScrollableSheet(
+          initialChildSize: 0.7,
+          maxChildSize: 0.9,
+          minChildSize: 0.5,
+          expand: false,
+          builder: (_, sc) => Column(
             children: [
+              const SizedBox(height: 12),
               Container(
-                padding: const EdgeInsets.all(16),
-                decoration: const BoxDecoration(
-                  border: Border(bottom: BorderSide(color: Colors.grey)),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: _border,
+                  borderRadius: BorderRadius.circular(2),
                 ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(20),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      "${student.first_name} ${student.last_name} - Ödeme Geçmişi",
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+                    Container(
+                      width: 52,
+                      height: 52,
+                      decoration: BoxDecoration(
+                        color: _accent.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: Center(
+                        child: Text(
+                          student.first_name.isNotEmpty
+                              ? student.first_name[0].toUpperCase()
+                              : "?",
+                          style: TextStyle(
+                            color: _accent,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 22,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "${student.first_name} ${student.last_name}",
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            "Ödeme Geçmişi",
+                            style: TextStyle(
+                              color: _textSecondary,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.close),
+                      icon: const Icon(Icons.close, color: _textSecondary),
                       onPressed: () => Navigator.pop(ctx),
                     ),
                   ],
                 ),
               ),
+              const Divider(color: _border, height: 1),
               Expanded(
-                child: sortedMonths.isEmpty
-                    ? const Center(child: Text("Henüz ödeme kaydı yok"))
-                    : ListView.builder(
-                        controller: scrollController,
-                        itemCount: sortedMonths.length,
-                        itemBuilder: (context, index) {
-                          final month = sortedMonths[index];
-                          final payments = paymentsByMonth[month]!;
-                          final monthlyFee = _getStudentMonthlyFee(student.app);
-                          final totalPaid = payments.fold<double>(
+                child: byMonth.isEmpty
+                    ? const Center(
+                        child: Text(
+                          "Henüz ödeme kaydı yok",
+                          style: TextStyle(color: _textSecondary),
+                        ),
+                      )
+                    : ListView(
+                        controller: sc,
+                        padding: const EdgeInsets.all(16),
+                        children: byMonth.entries.map((e) {
+                          final fee = _getCachedFee(student.app);
+                          final total = e.value.fold<double>(
                             0,
-                            (sum, p) => sum + (double.tryParse(p.amount) ?? 0),
+                            (s, p) => s + (double.tryParse(p.amount) ?? 0),
                           );
-                          final isFullyPaid = totalPaid >= monthlyFee;
-                          final isPartial =
-                              totalPaid > 0 && totalPaid < monthlyFee;
-
-                          return Card(
-                            margin: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 6,
+                          final color = total >= fee
+                              ? _green
+                              : total > 0
+                              ? _orange
+                              : _red;
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            decoration: BoxDecoration(
+                              color: _surfaceLight,
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(color: color.withOpacity(0.3)),
                             ),
                             child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Container(
-                                  padding: const EdgeInsets.all(12),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 12,
+                                  ),
                                   decoration: BoxDecoration(
-                                    color: isFullyPaid
-                                        ? Colors.green.shade50
-                                        : isPartial
-                                        ? Colors.orange.shade50
-                                        : Colors.red.shade50,
-                                    borderRadius: const BorderRadius.only(
-                                      topLeft: Radius.circular(12),
-                                      topRight: Radius.circular(12),
+                                    color: color.withOpacity(0.1),
+                                    borderRadius: const BorderRadius.vertical(
+                                      top: Radius.circular(18),
                                     ),
                                   ),
                                   child: Row(
@@ -432,221 +579,1195 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
                                         MainAxisAlignment.spaceBetween,
                                     children: [
                                       Text(
-                                        month,
+                                        e.key,
                                         style: TextStyle(
+                                          color: color,
                                           fontWeight: FontWeight.bold,
-                                          color: isFullyPaid
-                                              ? Colors.green
-                                              : isPartial
-                                              ? Colors.orange
-                                              : Colors.red,
                                         ),
                                       ),
                                       Text(
-                                        "${totalPaid.toStringAsFixed(0)} / $monthlyFee TL",
+                                        "${total.toStringAsFixed(0)} / ${fee.toStringAsFixed(0)} ₺",
                                         style: TextStyle(
+                                          color: color,
                                           fontWeight: FontWeight.bold,
-                                          color: isFullyPaid
-                                              ? Colors.green
-                                              : isPartial
-                                              ? Colors.orange
-                                              : Colors.red,
                                         ),
                                       ),
                                     ],
                                   ),
                                 ),
-                                ...payments
-                                    .map(
-                                      (payment) => ListTile(
-                                        leading: CircleAvatar(
-                                          backgroundColor: Colors.teal.shade100,
-                                          child: Icon(
-                                            Icons.receipt,
-                                            color: Colors.teal,
-                                            size: 18,
-                                          ),
-                                        ),
-                                        title: Text("${payment.amount} TL"),
-                                        subtitle: Text(
-                                          "${payment.payment_method} - ${_formatDate(payment.paid_date)}",
-                                        ),
-                                        trailing: payment.note.isNotEmpty
-                                            ? Icon(
-                                                Icons.note,
-                                                color: Colors.grey,
-                                                size: 18,
-                                              )
-                                            : null,
-                                        onTap: () =>
-                                            _showPaymentDetail(payment),
+                                ...e.value.map(
+                                  (p) => ListTile(
+                                    dense: true,
+                                    leading: Container(
+                                      padding: const EdgeInsets.all(8),
+                                      decoration: BoxDecoration(
+                                        color: _accent.withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(12),
                                       ),
-                                    )
-                                    .toList(),
+                                      child: Icon(
+                                        Icons.receipt_long,
+                                        color: _accent,
+                                        size: 20,
+                                      ),
+                                    ),
+                                    title: Text(
+                                      "${p.amount} ₺",
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    subtitle: Text(
+                                      "${p.payment_method} · ${_formatDate(p.paid_date)}",
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        color: _textSecondary,
+                                      ),
+                                    ),
+                                    onTap: () => _showPaymentDetail(p),
+                                  ),
+                                ),
                               ],
                             ),
                           );
-                        },
+                        }).toList(),
                       ),
               ),
             ],
-          );
-        },
+          ),
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final parts = selectedMonthFilter.split('-');
+    final monthName = parts.length == 2
+        ? _getMonthName(int.parse(parts[1]))
+        : "";
+    final year = parts.isNotEmpty ? parts[0] : "";
+    final total = _paidCount + _partialCount + _unpaidCount;
+    final paidPct = total > 0 ? _paidCount / total : 0.0;
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF1F5F9),
+      backgroundColor: _bg,
       appBar: AppBar(
-        title: const Text(
-          "Öğrenci Yönetimi",
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        backgroundColor: Colors.teal,
+        backgroundColor: _surface,
         elevation: 0,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "Öğrenci Ödeme Sayfası",
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 20,
+                color: _textPrimary,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              "$monthName $year · $total öğrenci",
+              style: TextStyle(color: _textSecondary, fontSize: 12),
+            ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded, color: _accent),
+            onPressed: () => _loadAllData(),
+          ),
+          const SizedBox(width: 4),
+        ],
       ),
       body: isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: CircularProgressIndicator(color: _accent))
           : RefreshIndicator(
-              onRefresh: () async {
-                await _loadAllData();
-                _applyFilters();
-              },
-              child: Column(
-                children: [
-                  _buildSearchBar(),
-                  _buildFilterBar(),
-                  const SizedBox(height: 12),
-                  Expanded(
-                    child: filteredStudents.isEmpty
-                        ? const Center(child: Text("Öğrenci bulunamadı"))
-                        : ListView.builder(
-                            padding: const EdgeInsets.all(12),
-                            itemCount: filteredStudents.length,
-                            itemBuilder: (context, index) {
-                              final student = filteredStudents[index];
-                              final status = _getPaymentStatus(
-                                student.app,
-                                selectedMonthFilter,
-                              );
-                              final color = _getPaymentColor(status);
-                              final monthlyFee = _getStudentMonthlyFee(
-                                student.app,
-                              );
-                              final paidAmount = _getStudentTotalPaid(
-                                student.app,
-                                selectedMonthFilter,
-                              );
-
-                              return _buildStudentCard(
-                                student,
-                                status,
-                                color,
-                                monthlyFee,
-                                paidAmount,
-                              );
-                            },
+              onRefresh: () async => _loadAllData(),
+              color: _accent,
+              child: CustomScrollView(
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: Column(
+                      children: [
+                        // ÖZET KARTI
+                        Container(
+                          margin: const EdgeInsets.all(16),
+                          padding: const EdgeInsets.all(20),
+                          decoration: BoxDecoration(
+                            color: _surface,
+                            borderRadius: BorderRadius.circular(24),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.04),
+                                blurRadius: 12,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
                           ),
+                          child: Column(
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          "$monthName $year",
+                                          style: const TextStyle(
+                                            fontSize: 22,
+                                            fontWeight: FontWeight.w800,
+                                            letterSpacing: -0.5,
+                                            color: _textPrimary,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        const Text(
+                                          "Ödeme Durumu Özeti",
+                                          style: TextStyle(
+                                            color: _textSecondary,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Container(
+                                    width: 72,
+                                    height: 72,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: paidPct >= 0.7
+                                            ? _green
+                                            : paidPct >= 0.4
+                                            ? _orange
+                                            : _red,
+                                        width: 4,
+                                      ),
+                                    ),
+                                    child: Center(
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            "${(paidPct * 100).toStringAsFixed(0)}%",
+                                            style: TextStyle(
+                                              color: paidPct >= 0.7
+                                                  ? _green
+                                                  : paidPct >= 0.4
+                                                  ? _orange
+                                                  : _red,
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                          const Text(
+                                            "ödendi",
+                                            style: TextStyle(
+                                              color: _textSecondary,
+                                              fontSize: 10,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 18),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: LinearProgressIndicator(
+                                  value: paidPct,
+                                  backgroundColor: _border,
+                                  valueColor: const AlwaysStoppedAnimation(
+                                    _green,
+                                  ),
+                                  minHeight: 10,
+                                ),
+                              ),
+                              const SizedBox(height: 20),
+                              Row(
+                                children: [
+                                  _statCard(
+                                    "Ödeyenler",
+                                    _paidCount,
+                                    _green,
+                                    Icons.check_circle_rounded,
+                                    "Ödeyenler",
+                                  ),
+                                  const SizedBox(width: 10),
+                                  _statCard(
+                                    "Kısmi",
+                                    _partialCount,
+                                    _orange,
+                                    Icons.timelapse_rounded,
+                                    "Kısmi Ödeyenler",
+                                  ),
+                                  const SizedBox(width: 10),
+                                  _statCard(
+                                    "Ödemeyenler",
+                                    _unpaidCount,
+                                    _red,
+                                    Icons.cancel_rounded,
+                                    "Ödemeyenler",
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // FİLTRELER
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Column(
+                            children: [
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: _surface,
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(color: _border),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.02),
+                                      blurRadius: 4,
+                                    ),
+                                  ],
+                                ),
+                                child: TextField(
+                                  style: const TextStyle(color: _textPrimary),
+                                  decoration: InputDecoration(
+                                    hintText: "Öğrenci ara...",
+                                    hintStyle: TextStyle(color: _textSecondary),
+                                    prefixIcon: Icon(
+                                      Icons.search_rounded,
+                                      color: _textSecondary,
+                                    ),
+                                    suffixIcon: searchQuery.isNotEmpty
+                                        ? IconButton(
+                                            icon: Icon(
+                                              Icons.clear,
+                                              color: _textSecondary,
+                                              size: 18,
+                                            ),
+                                            onPressed: () {
+                                              setState(() {
+                                                searchQuery = "";
+                                                _applyFilters();
+                                              });
+                                            },
+                                          )
+                                        : null,
+                                    border: InputBorder.none,
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      vertical: 14,
+                                      horizontal: 16,
+                                    ),
+                                  ),
+                                  onChanged: (v) {
+                                    setState(() {
+                                      searchQuery = v;
+                                      _applyFilters();
+                                    });
+                                  },
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _dropdown(
+                                      value: selectedGroupFilter,
+                                      items: groupNames,
+                                      icon: Icons.group_rounded,
+                                      onChanged: (v) {
+                                        setState(
+                                          () => selectedGroupFilter = v!,
+                                        );
+                                        _updateCounts();
+                                        _applyFilters();
+                                      },
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: _dropdown(
+                                      value: selectedMonthFilter,
+                                      items: monthOptions,
+                                      icon: Icons.calendar_month_rounded,
+                                      displayMap: (m) {
+                                        final p = m.split('-');
+                                        return "${_getMonthName(int.parse(p[1]))} ${p[0]}";
+                                      },
+                                      onChanged: (v) {
+                                        setState(
+                                          () => selectedMonthFilter = v!,
+                                        );
+                                        _updateCounts();
+                                        _applyFilters();
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        if (selectedPaymentFilter != "Tümü")
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                            child: Row(
+                              children: [
+                                const Text(
+                                  "Filtre:",
+                                  style: TextStyle(
+                                    color: _textSecondary,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                GestureDetector(
+                                  onTap: () {
+                                    setState(() {
+                                      selectedPaymentFilter = "Tümü";
+                                      _applyFilters();
+                                    });
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 5,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: _accent.withOpacity(0.1),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          selectedPaymentFilter,
+                                          style: TextStyle(
+                                            color: _accent,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        const Icon(
+                                          Icons.close,
+                                          color: _accent,
+                                          size: 14,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: _accent.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                child: Text(
+                                  "${filteredStudents.length} öğrenci",
+                                  style: TextStyle(
+                                    color: _accent,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
+
+                  filteredStudents.isEmpty
+                      ? SliverFillRemaining(
+                          child: Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.search_off_rounded,
+                                  color: _textTertiary,
+                                  size: 56,
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  "Öğrenci bulunamadı",
+                                  style: TextStyle(
+                                    color: _textSecondary,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      : SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                          sliver: SliverList(
+                            delegate: SliverChildBuilderDelegate((_, i) {
+                              final s = filteredStudents[i];
+                              final status = _getCachedStatus(s.app);
+                              final color = _statusColor(status);
+                              final fee = _getCachedFee(s.app);
+                              final paid = _getCachedPaid(s.app);
+                              final pct = fee > 0
+                                  ? (paid / fee).clamp(0.0, 1.0)
+                                  : 0.0;
+                              final group = _getCachedGroupName(s.app);
+
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 12),
+                                decoration: BoxDecoration(
+                                  color: _surface,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: _border),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.03),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 2),
+                                    ),
+                                  ],
+                                ),
+                                child: Material(
+                                  color: Colors.transparent,
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(20),
+                                    onTap: () async {
+                                      final result = await Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) =>
+                                              PaymentScreen(student: s),
+                                        ),
+                                      );
+                                      if (result == true) await ();
+                                    },
+                                    onLongPress: () => _showPaymentHistory(s),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(16),
+                                      child: Column(
+                                        children: [
+                                          Row(
+                                            children: [
+                                              Container(
+                                                width: 52,
+                                                height: 52,
+                                                decoration: BoxDecoration(
+                                                  color: color.withOpacity(0.1),
+                                                  borderRadius:
+                                                      BorderRadius.circular(18),
+                                                ),
+                                                child: Center(
+                                                  child: Text(
+                                                    s.first_name.isNotEmpty
+                                                        ? s.first_name[0]
+                                                              .toUpperCase()
+                                                        : "?",
+                                                    style: TextStyle(
+                                                      color: color,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      fontSize: 22,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                              const SizedBox(width: 14),
+                                              Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(
+                                                      "${s.first_name} ${s.last_name}",
+                                                      style: const TextStyle(
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                        fontSize: 16,
+                                                        color: _textPrimary,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(height: 4),
+                                                    Row(
+                                                      children: [
+                                                        Icon(
+                                                          Icons.group_rounded,
+                                                          size: 12,
+                                                          color: _textSecondary,
+                                                        ),
+                                                        const SizedBox(
+                                                          width: 4,
+                                                        ),
+                                                        Text(
+                                                          group,
+                                                          style: TextStyle(
+                                                            color:
+                                                                _textSecondary,
+                                                            fontSize: 12,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                              Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 10,
+                                                      vertical: 5,
+                                                    ),
+                                                decoration: BoxDecoration(
+                                                  color: color.withOpacity(0.1),
+                                                  borderRadius:
+                                                      BorderRadius.circular(12),
+                                                ),
+                                                child: Row(
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  children: [
+                                                    Icon(
+                                                      _statusIcon(status),
+                                                      color: color,
+                                                      size: 14,
+                                                    ),
+                                                    const SizedBox(width: 6),
+                                                    Text(
+                                                      _statusLabel(status),
+                                                      style: TextStyle(
+                                                        color: color,
+                                                        fontSize: 12,
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 14),
+                                          Container(
+                                            padding: const EdgeInsets.all(12),
+                                            decoration: BoxDecoration(
+                                              color: _surfaceLight,
+                                              borderRadius:
+                                                  BorderRadius.circular(14),
+                                            ),
+                                            child: Column(
+                                              children: [
+                                                Row(
+                                                  children: [
+                                                    _chip(
+                                                      "Aidat",
+                                                      "${fee.toStringAsFixed(0)} ₺",
+                                                      _textSecondary,
+                                                    ),
+                                                    const SizedBox(width: 8),
+                                                    _chip(
+                                                      "Ödenen",
+                                                      "${paid.toStringAsFixed(0)} ₺",
+                                                      color,
+                                                    ),
+                                                    if (fee - paid > 0 &&
+                                                        status != "paid") ...[
+                                                      const SizedBox(width: 8),
+                                                      _chip(
+                                                        "Kalan",
+                                                        "${(fee - paid).toStringAsFixed(0)} ₺",
+                                                        _orange,
+                                                      ),
+                                                    ],
+                                                    const Spacer(),
+                                                    Text(
+                                                      "${(pct * 100).toStringAsFixed(0)}%",
+                                                      style: TextStyle(
+                                                        color: color,
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                        fontSize: 14,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                                const SizedBox(height: 10),
+                                                ClipRRect(
+                                                  borderRadius:
+                                                      BorderRadius.circular(6),
+                                                  child: LinearProgressIndicator(
+                                                    value: pct,
+                                                    backgroundColor: _border,
+                                                    valueColor:
+                                                        AlwaysStoppedAnimation(
+                                                          color,
+                                                        ),
+                                                    minHeight: 6,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }, childCount: filteredStudents.length),
+                          ),
+                        ),
                 ],
               ),
             ),
     );
   }
 
-  Widget _buildSearchBar() {
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: TextField(
-        onChanged: _search,
-        decoration: InputDecoration(
-          hintText: "İsim veya soyisim ile ara...",
-          prefixIcon: const Icon(Icons.search),
-          filled: true,
-          fillColor: Colors.white,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
+  Widget _statCard(
+    String label,
+    int count,
+    Color color,
+    IconData icon,
+    String filterValue,
+  ) {
+    final sel = selectedPaymentFilter == filterValue;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () {
+          setState(() {
+            selectedPaymentFilter = sel ? "Tümü" : filterValue;
+            _applyFilters();
+          });
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            color: sel ? color.withOpacity(0.1) : _surfaceLight,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: sel ? color : _border, width: 1.5),
+          ),
+          child: Column(
+            children: [
+              Icon(icon, color: sel ? color : _textSecondary, size: 22),
+              const SizedBox(height: 6),
+              Text(
+                "$count",
+                style: TextStyle(
+                  color: sel ? color : _textPrimary,
+                  fontSize: 26,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  color: sel ? color : _textSecondary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 
-  Widget _buildFilterBar() {
+  Widget _dropdown({
+    required String value,
+    required List<String> items,
+    required IconData icon,
+    required ValueChanged<String?> onChanged,
+    String Function(String)? displayMap,
+  }) {
     return Container(
-      padding: const EdgeInsets.all(12),
-      color: Colors.white,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: _surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _border),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: value,
+          isExpanded: true,
+          dropdownColor: _surface,
+          icon: Icon(
+            Icons.keyboard_arrow_down_rounded,
+            color: _textSecondary,
+            size: 20,
+          ),
+          items: items.map((item) {
+            final display = displayMap != null ? displayMap(item) : item;
+            return DropdownMenuItem(
+              value: item,
+              child: Row(
+                children: [
+                  Icon(icon, color: _accent, size: 16),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      display,
+                      style: const TextStyle(color: _textPrimary, fontSize: 13),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+          onChanged: onChanged,
+        ),
+      ),
+    );
+  }
+
+  Widget _chip(String label, String value, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(10),
+      ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          DropdownButtonFormField<String>(
-            value: selectedGroupFilter,
-            decoration: const InputDecoration(
-              labelText: "Grup",
-              border: OutlineInputBorder(),
-              prefixIcon: Icon(Icons.group),
+          Text(
+            label,
+            style: const TextStyle(
+              color: _textSecondary,
+              fontSize: 10,
+              fontWeight: FontWeight.w500,
             ),
-            items: groupNames
-                .map((g) => DropdownMenuItem(value: g, child: Text(g)))
-                .toList(),
-            onChanged: (val) {
-              setState(() => selectedGroupFilter = val!);
-              _applyFilters();
-            },
           ),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            value: selectedMonthFilter,
-            decoration: const InputDecoration(
-              labelText: "Ay",
-              border: OutlineInputBorder(),
-              prefixIcon: Icon(Icons.calendar_month),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
             ),
-            items: monthOptions.map((m) {
-              final parts = m.split('-');
-              final monthName = _getMonthName(int.parse(parts[1]));
-              return DropdownMenuItem(
-                value: m,
-                child: Text("$monthName ${parts[0]}"),
-              );
-            }).toList(),
-            onChanged: (val) {
-              setState(() => selectedMonthFilter = val!);
-              _applyFilters();
-            },
           ),
-          const SizedBox(height: 12),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                _buildFilterChip(
-                  "Tümü",
-                  selectedPaymentFilter == "Tümü",
-                  Colors.grey,
-                ),
-                const SizedBox(width: 8),
-                _buildFilterChip(
-                  "Ödeyenler",
-                  selectedPaymentFilter == "Ödeyenler",
-                  Colors.green,
-                ),
-                const SizedBox(width: 8),
-                _buildFilterChip(
-                  "Kısmi Ödeyenler",
-                  selectedPaymentFilter == "Kısmi Ödeyenler",
-                  Colors.orange,
-                ),
-                const SizedBox(width: 8),
-                _buildFilterChip(
-                  "Ödemeyenler",
-                  selectedPaymentFilter == "Ödemeyenler",
-                  Colors.red,
-                ),
-              ],
+        ],
+      ),
+    );
+  }
+}
+*/
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:EVOM_SPOR/datapage/data_page/data.dart';
+import 'package:EVOM_SPOR/datapage/fetch_data_page.dart';
+import 'package:EVOM_SPOR/managerpage/manager_payment_dekont.dart';
+
+class StudentSearchScreen extends StatefulWidget {
+  final Users? currentUser;
+  const StudentSearchScreen({Key? key, this.currentUser}) : super(key: key);
+
+  @override
+  _StudentSearchScreenState createState() => _StudentSearchScreenState();
+}
+
+class _StudentSearchScreenState extends State<StudentSearchScreen> {
+  List<Users> allStudents = [];
+  List<Users> filteredStudents = [];
+  List<Payment> allPayments = [];
+  List<Group> allGroups = [];
+  List<GroupStudent> allRelations = [];
+
+  bool isLoading = true;
+
+  String selectedGroupFilter = "Tümü";
+  String selectedMonthFilter = "";
+  String selectedPaymentFilter = "Tümü";
+
+  List<String> groupNames = ["Tümü"];
+  List<String> monthOptions = [];
+  String searchQuery = "";
+
+  int _paidCount = 0;
+  int _partialCount = 0;
+  int _unpaidCount = 0;
+
+  // 🔥 CACHE MEKANİZMASI
+  final Map<String, double> _feeCache = {};
+  final Map<String, double> _paidCache = {};
+  final Map<String, String> _statusCache = {};
+  final Map<String, String> _groupNameCache = {};
+
+  // 🔥 MODERN BEYAZ TEMA
+  static const Color _bg = Color(0xFFF8FAFC);
+  static const Color _surface = Colors.white;
+  static const Color _surfaceLight = Color(0xFFF1F5F9);
+  static const Color _accent = Color(0xFF0EA5E9);
+  static const Color _accentDark = Color(0xFF0284C7);
+  static const Color _textPrimary = Color(0xFF0F172A);
+  static const Color _textSecondary = Color(0xFF64748B);
+  static const Color _textTertiary = Color(0xFF94A3B8);
+  static const Color _green = Color(0xFF22C55E);
+  static const Color _orange = Color(0xFFF97316);
+  static const Color _red = Color(0xFFEF4444);
+  static const Color _border = Color(0xFFE2E8F0);
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAllDataParallel(); // 🔥 PARALEL VERSİYON
+  }
+
+  @override
+  void dispose() {
+    _feeCache.clear();
+    _paidCache.clear();
+    _statusCache.clear();
+    _groupNameCache.clear();
+    super.dispose();
+  }
+
+  // 🚀 PARALEL VERİ YÜKLEME (HIZLI!)
+  void _loadAllDataParallel() {
+    setState(() => isLoading = true);
+
+    Future.microtask(() async {
+      final stopwatch = Stopwatch()..start();
+
+      _feeCache.clear();
+      _paidCache.clear();
+      _statusCache.clear();
+      _groupNameCache.clear();
+
+      try {
+        // 🔥 TÜM VERİLERİ PARALEL OLARAK ÇEK (4 işlem aynı anda!)
+        final results = await Future.wait([
+          GoogleSheetService.getStudentsOnlyCached(),
+          GoogleSheetService.getPaymentsCached(),
+          GoogleSheetService.getGroupsCached(),
+          GoogleSheetService.getGroupStudentsCached(),
+        ]);
+
+        allStudents = results[0] as List<Users>;
+        allPayments = results[1] as List<Payment>;
+        allGroups = results[2] as List<Group>;
+        allRelations = results[3] as List<GroupStudent>;
+
+        stopwatch.stop();
+        print(
+          "⏱️ StudentSearchScreen verileri PARALEL olarak ${stopwatch.elapsedMilliseconds}ms'de yüklendi",
+        );
+
+        _prepareFilters();
+        _updateCounts();
+        _applyFilters();
+
+        if (mounted) setState(() => isLoading = false);
+      } catch (e) {
+        print("❌ StudentSearchScreen yükleme hatası: $e");
+        if (mounted) setState(() => isLoading = false);
+      }
+    });
+  }
+
+  // Eski metod (geriye dönük uyumluluk için)
+  void _loadAllData() {
+    _loadAllDataParallel();
+  }
+
+  void _prepareFilters() {
+    groupNames = ["Tümü", ...allGroups.map((g) => g.name).toSet()];
+    final now = DateTime.now();
+    monthOptions.clear();
+    for (int i = -6; i <= 6; i++) {
+      monthOptions.add(
+        DateFormat('yyyy-MM').format(DateTime(now.year, now.month + i)),
+      );
+    }
+    selectedMonthFilter = monthOptions[6];
+  }
+
+  String _getCachedGroupName(String studentId) {
+    if (_groupNameCache.containsKey(studentId))
+      return _groupNameCache[studentId]!;
+    final name = _getStudentGroupName(studentId);
+    _groupNameCache[studentId] = name;
+    return name;
+  }
+
+  double _getCachedFee(String studentId) {
+    if (_feeCache.containsKey(studentId)) return _feeCache[studentId]!;
+    final fee = _getStudentMonthlyFee(studentId);
+    _feeCache[studentId] = fee;
+    return fee;
+  }
+
+  double _getCachedPaid(String studentId) {
+    if (_paidCache.containsKey(studentId)) return _paidCache[studentId]!;
+    final paid = _getStudentTotalPaid(studentId, selectedMonthFilter);
+    _paidCache[studentId] = paid;
+    return paid;
+  }
+
+  String _getCachedStatus(String studentId) {
+    if (_statusCache.containsKey(studentId)) return _statusCache[studentId]!;
+    final status = _getPaymentStatus(studentId, selectedMonthFilter);
+    _statusCache[studentId] = status;
+    return status;
+  }
+
+  void _updateCounts() {
+    int paid = 0, partial = 0, unpaid = 0;
+    _paidCache.clear();
+    _statusCache.clear();
+
+    for (var s in allStudents) {
+      if (selectedGroupFilter != "Tümü" &&
+          _getCachedGroupName(s.app) != selectedGroupFilter)
+        continue;
+      final status = _getCachedStatus(s.app);
+      switch (status) {
+        case "paid":
+          paid++;
+          break;
+        case "partial":
+          partial++;
+          break;
+        case "unpaid":
+          unpaid++;
+          break;
+      }
+    }
+    setState(() {
+      _paidCount = paid;
+      _partialCount = partial;
+      _unpaidCount = unpaid;
+    });
+  }
+
+  String _getMonthName(int m) => [
+    "Ocak",
+    "Şubat",
+    "Mart",
+    "Nisan",
+    "Mayıs",
+    "Haziran",
+    "Temmuz",
+    "Ağustos",
+    "Eylül",
+    "Ekim",
+    "Kasım",
+    "Aralık",
+  ][m - 1];
+
+  // 🔥 YENİ - Doğrudan grup adını bul
+  String _getStudentGroupName(String studentId) {
+    // Öğrencinin grup ilişkilerini bul
+    final studentRelations = allRelations
+        .where(
+          (r) =>
+              r.student_id == studentId && r.is_active.toUpperCase() == "TRUE",
+        )
+        .toList();
+
+    if (studentRelations.isEmpty) {
+      print("Öğrenci $studentId için aktif grup ilişkisi bulunamadı");
+      return "Grup Yok";
+    }
+
+    // İlk aktif grubun ID'sini al
+    final groupId = studentRelations.first.groups_id;
+
+    // Grup bilgisini bul
+    final group = allGroups.firstWhere(
+      (g) => g.groups_id == groupId,
+      orElse: () {
+        print("Grup ID $groupId için grup bulunamadı");
+        return Group(
+          groups_id: "",
+          name: "Grup Yok",
+          coach_id: "",
+          branches_id: "",
+          sports_id: "",
+          schedule: "",
+          capacity: "",
+          monthly_fee: "",
+          is_active: "",
+        );
+      },
+    );
+
+    print("Öğrenci: $studentId -> Grup: ${group.name} (ID: $groupId)");
+    return group.name.isEmpty ? "Grup Yok" : group.name;
+  }
+
+  double _getStudentMonthlyFee(String id) {
+    final s = allStudents.firstWhere(
+      (s) => s.app == id,
+      orElse: () => Users(
+        app: "",
+        branches_id: "",
+        first_name: "",
+        last_name: "",
+        email: "",
+        phone: "",
+        password_hash: "",
+        role: "",
+        profile_photo_url: "",
+        amount: "0",
+        b_date: "",
+        created_at: "",
+        last_login: "",
+        is_active: "",
+      ),
+    );
+    return double.tryParse(s.amount) ?? 0;
+  }
+
+  double _getStudentTotalPaid(String id, String monthYear) {
+    final parts = monthYear.split('-');
+    if (parts.length != 2) return 0;
+    final yr = int.parse(parts[0]);
+    final mo = int.parse(parts[1]);
+    double total = 0;
+    for (var p in allPayments) {
+      if (p.student_id != id) continue;
+      final st = p.status.toString().toUpperCase();
+      if (st != "PAID" && st != "TRUE") continue;
+      try {
+        final d = DateTime.parse(p.paid_date.split('T')[0]);
+        if (d.year == yr && d.month == mo)
+          total += double.tryParse(p.amount) ?? 0;
+      } catch (_) {}
+    }
+    return total;
+  }
+
+  String _getPaymentStatus(String id, String monthYear) {
+    final fee = _getStudentMonthlyFee(id);
+    final paid = _getStudentTotalPaid(id, monthYear);
+    if (fee == 0) return "unknown";
+    if (paid >= fee) return "paid";
+    if (paid > 0) return "partial";
+    return "unpaid";
+  }
+
+  Color _statusColor(String s) => s == "paid"
+      ? _green
+      : s == "partial"
+      ? _orange
+      : _red;
+  String _statusLabel(String s) => s == "paid"
+      ? "Ödedi"
+      : s == "partial"
+      ? "Kısmi"
+      : "Ödemedi";
+  IconData _statusIcon(String s) => s == "paid"
+      ? Icons.check_circle_rounded
+      : s == "partial"
+      ? Icons.timelapse_rounded
+      : Icons.cancel_rounded;
+
+  void _applyFilters() {
+    setState(() {
+      filteredStudents = allStudents.where((s) {
+        if (searchQuery.isNotEmpty &&
+            !"${s.first_name} ${s.last_name}".toLowerCase().contains(
+              searchQuery.toLowerCase(),
+            ))
+          return false;
+        if (selectedGroupFilter != "Tümü" &&
+            _getCachedGroupName(s.app) != selectedGroupFilter)
+          return false;
+        if (selectedPaymentFilter != "Tümü") {
+          final st = _getCachedStatus(s.app);
+          if (selectedPaymentFilter == "Ödeyenler" && st != "paid")
+            return false;
+          if (selectedPaymentFilter == "Ödemeyenler" && st != "unpaid")
+            return false;
+          if (selectedPaymentFilter == "Kısmi Ödeyenler" && st != "partial")
+            return false;
+        }
+        return true;
+      }).toList();
+    });
+  }
+
+  String _formatDate(String d) {
+    if (d.isEmpty) return "—";
+    try {
+      return DateFormat('dd/MM/yyyy').format(DateTime.parse(d.split('T')[0]));
+    } catch (_) {
+      return d;
+    }
+  }
+
+  void _showPaymentDetail(Payment p) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: _accent.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(Icons.receipt_long, color: _accent, size: 26),
+            ),
+            const SizedBox(width: 14),
+            const Text(
+              "Ödeme Detayı",
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _dRow("Tutar", "${p.amount} TL", _green),
+            _dRow("Yöntem", p.payment_method, _accent),
+            _dRow("Tarih", _formatDate(p.paid_date), _orange),
+            if (p.note.isNotEmpty) _dRow("Not", p.note, _textSecondary),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            style: TextButton.styleFrom(
+              backgroundColor: _accent.withOpacity(0.1),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            child: Text(
+              "Kapat",
+              style: TextStyle(color: _accent, fontWeight: FontWeight.bold),
             ),
           ),
         ],
@@ -654,199 +1775,221 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
     );
   }
 
-  Widget _buildFilterChip(String label, bool isSelected, Color color) {
-    return FilterChip(
-      label: Text(label),
-      selected: isSelected,
-      onSelected: (selected) {
-        setState(() {
-          selectedPaymentFilter = selected ? label : "Tümü";
-          _applyFilters();
-        });
-      },
-      backgroundColor: Colors.grey.shade200,
-      selectedColor: color.withOpacity(0.2),
-      checkmarkColor: color,
-      labelStyle: TextStyle(
-        color: isSelected ? color : Colors.grey.shade700,
-        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-      ),
-    );
-  }
+  Widget _dRow(String label, String value, Color valueColor) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Row(
+      children: [
+        SizedBox(
+          width: 55,
+          child: Text(
+            label,
+            style: TextStyle(color: _textSecondary, fontSize: 13),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: TextStyle(
+              color: valueColor,
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 
-  Widget _buildStudentCard(
-    Users student,
-    String status,
-    Color color,
-    double monthlyFee,
-    double paidAmount,
-  ) {
-    final remainingDebt = monthlyFee - paidAmount;
-    final isPartial = status == "partial";
+  void _showPaymentHistory(Users student) {
+    Map<String, List<Payment>> byMonth = {};
+    for (var p in allPayments.where((p) => p.student_id == student.app)) {
+      final st = p.status.toString().toUpperCase();
+      if (st != "PAID" && st != "TRUE") continue;
+      try {
+        final d = DateTime.parse(p.paid_date.split('T')[0]);
+        (byMonth["${_getMonthName(d.month)} ${d.year}"] ??= []).add(p);
+      } catch (_) {}
+    }
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: color, width: 2),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () async {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => PaymentScreen(student: student)),
-          );
-          if (result == true) {
-            await _loadAllData();
-            _applyFilters();
-          }
-        },
-        onLongPress: () => _showPaymentHistory(student),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: DraggableScrollableSheet(
+          initialChildSize: 0.7,
+          maxChildSize: 0.9,
+          minChildSize: 0.5,
+          expand: false,
+          builder: (_, sc) => Column(
             children: [
-              Row(
-                children: [
-                  CircleAvatar(
-                    backgroundColor: color.withOpacity(0.2),
-                    child: Text(
-                      student.first_name[0].toUpperCase(),
-                      style: TextStyle(
-                        color: color,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          "${student.first_name} ${student.last_name}",
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text(
-                          student.email,
-                          style: TextStyle(
-                            color: Colors.grey[600],
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: color.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      _getPaymentText(status),
-                      style: TextStyle(
-                        color: color,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildInfoChip(
-                      Icons.group,
-                      _getStudentGroupName(student.app),
-                      Colors.grey.shade100,
-                      Colors.grey.shade700,
-                    ),
-                  ),
-                  Expanded(
-                    child: _buildInfoChip(
-                      Icons.money,
-                      "Aylık: ${monthlyFee.toStringAsFixed(0)} TL",
-                      Colors.grey.shade100,
-                      Colors.grey.shade700,
-                    ),
-                  ),
-                ],
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: _border,
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildInfoChip(
-                      Icons.payment,
-                      "Ödenen: ${paidAmount.toStringAsFixed(0)} TL",
-                      color.withOpacity(0.1),
-                      color,
-                    ),
-                  ),
-                  Expanded(
-                    child: _buildInfoChip(
-                      Icons.trending_up,
-                      "${monthlyFee > 0 ? ((paidAmount / monthlyFee) * 100).toStringAsFixed(0) : 0}%",
-                      color.withOpacity(0.1),
-                      color,
-                    ),
-                  ),
-                ],
-              ),
-              if (isPartial && remainingDebt > 0) ...[
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.warning_amber,
-                        color: Colors.orange.shade700,
-                        size: 16,
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 52,
+                      height: 52,
+                      decoration: BoxDecoration(
+                        color: _accent.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(18),
                       ),
-                      const SizedBox(width: 8),
-                      Text(
-                        "Kalan Borç: ${remainingDebt.toStringAsFixed(2)} TL",
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.orange.shade700,
+                      child: Center(
+                        child: Text(
+                          student.first_name.isNotEmpty
+                              ? student.first_name[0].toUpperCase()
+                              : "?",
+                          style: TextStyle(
+                            color: _accent,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 22,
+                          ),
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "${student.first_name} ${student.last_name}",
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            "Ödeme Geçmişi",
+                            style: TextStyle(
+                              color: _textSecondary,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: _textSecondary),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
                 ),
-              ],
-              const SizedBox(height: 8),
-              LinearProgressIndicator(
-                value: monthlyFee > 0
-                    ? (paidAmount / monthlyFee).clamp(0.0, 1.0)
-                    : 0,
-                backgroundColor: Colors.grey.shade200,
-                color: color,
-                borderRadius: BorderRadius.circular(4),
-                minHeight: 6,
               ),
-              const SizedBox(height: 8),
-              Text(
-                "Uzun basarak ödeme geçmişini görüntüleyin",
-                style: TextStyle(fontSize: 10, color: Colors.grey[500]),
-                textAlign: TextAlign.center,
+              const Divider(color: _border, height: 1),
+              Expanded(
+                child: byMonth.isEmpty
+                    ? const Center(
+                        child: Text(
+                          "Henüz ödeme kaydı yok",
+                          style: TextStyle(color: _textSecondary),
+                        ),
+                      )
+                    : ListView(
+                        controller: sc,
+                        padding: const EdgeInsets.all(16),
+                        children: byMonth.entries.map((e) {
+                          final fee = _getCachedFee(student.app);
+                          final total = e.value.fold<double>(
+                            0,
+                            (s, p) => s + (double.tryParse(p.amount) ?? 0),
+                          );
+                          final color = total >= fee
+                              ? _green
+                              : total > 0
+                              ? _orange
+                              : _red;
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            decoration: BoxDecoration(
+                              color: _surfaceLight,
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(color: color.withOpacity(0.3)),
+                            ),
+                            child: Column(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 12,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: color.withOpacity(0.1),
+                                    borderRadius: const BorderRadius.vertical(
+                                      top: Radius.circular(18),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        e.key,
+                                        style: TextStyle(
+                                          color: color,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      Text(
+                                        "${total.toStringAsFixed(0)} / ${fee.toStringAsFixed(0)} ₺",
+                                        style: TextStyle(
+                                          color: color,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                ...e.value.map(
+                                  (p) => ListTile(
+                                    dense: true,
+                                    leading: Container(
+                                      padding: const EdgeInsets.all(8),
+                                      decoration: BoxDecoration(
+                                        color: _accent.withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Icon(
+                                        Icons.receipt_long,
+                                        color: _accent,
+                                        size: 20,
+                                      ),
+                                    ),
+                                    title: Text(
+                                      "${p.amount} ₺",
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    subtitle: Text(
+                                      "${p.payment_method} · ${_formatDate(p.paid_date)}",
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        color: _textSecondary,
+                                      ),
+                                    ),
+                                    onTap: () => _showPaymentDetail(p),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                      ),
               ),
             ],
           ),
@@ -855,27 +1998,740 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
     );
   }
 
-  Widget _buildInfoChip(
-    IconData icon,
-    String label,
-    Color bgColor,
-    Color textColor,
-  ) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 14, color: textColor),
+  @override
+  Widget build(BuildContext context) {
+    final parts = selectedMonthFilter.split('-');
+    final monthName = parts.length == 2
+        ? _getMonthName(int.parse(parts[1]))
+        : "";
+    final year = parts.isNotEmpty ? parts[0] : "";
+    final total = _paidCount + _partialCount + _unpaidCount;
+    final paidPct = total > 0 ? _paidCount / total : 0.0;
+
+    return Scaffold(
+      backgroundColor: _bg,
+      appBar: AppBar(
+        backgroundColor: _surface,
+        elevation: 0,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "Öğrenci Ödeme Sayfası",
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 20,
+                color: _textPrimary,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              "$monthName $year · $total öğrenci",
+              style: TextStyle(color: _textSecondary, fontSize: 12),
+            ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded, color: _accent),
+            onPressed: () => _loadAllDataParallel(), // 🔥 Paralel versiyon
+          ),
           const SizedBox(width: 4),
-          Expanded(
-            child: Text(
-              label,
-              style: TextStyle(fontSize: 11, color: textColor),
-              overflow: TextOverflow.ellipsis,
+        ],
+      ),
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator(color: _accent))
+          : RefreshIndicator(
+              onRefresh: () async =>
+                  _loadAllDataParallel(), // 🔥 Paralel versiyon
+              color: _accent,
+              child: CustomScrollView(
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: Column(
+                      children: [
+                        // ÖZET KARTI
+                        Container(
+                          margin: const EdgeInsets.all(16),
+                          padding: const EdgeInsets.all(20),
+                          decoration: BoxDecoration(
+                            color: _surface,
+                            borderRadius: BorderRadius.circular(24),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.04),
+                                blurRadius: 12,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          "$monthName $year",
+                                          style: const TextStyle(
+                                            fontSize: 22,
+                                            fontWeight: FontWeight.w800,
+                                            letterSpacing: -0.5,
+                                            color: _textPrimary,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        const Text(
+                                          "Ödeme Durumu Özeti",
+                                          style: TextStyle(
+                                            color: _textSecondary,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Container(
+                                    width: 72,
+                                    height: 72,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: paidPct >= 0.7
+                                            ? _green
+                                            : paidPct >= 0.4
+                                            ? _orange
+                                            : _red,
+                                        width: 4,
+                                      ),
+                                    ),
+                                    child: Center(
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            "${(paidPct * 100).toStringAsFixed(0)}%",
+                                            style: TextStyle(
+                                              color: paidPct >= 0.7
+                                                  ? _green
+                                                  : paidPct >= 0.4
+                                                  ? _orange
+                                                  : _red,
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                          const Text(
+                                            "ödendi",
+                                            style: TextStyle(
+                                              color: _textSecondary,
+                                              fontSize: 10,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 18),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: LinearProgressIndicator(
+                                  value: paidPct,
+                                  backgroundColor: _border,
+                                  valueColor: const AlwaysStoppedAnimation(
+                                    _green,
+                                  ),
+                                  minHeight: 10,
+                                ),
+                              ),
+                              const SizedBox(height: 20),
+                              Row(
+                                children: [
+                                  _statCard(
+                                    "Ödeyenler",
+                                    _paidCount,
+                                    _green,
+                                    Icons.check_circle_rounded,
+                                    "Ödeyenler",
+                                  ),
+                                  const SizedBox(width: 10),
+                                  _statCard(
+                                    "Kısmi",
+                                    _partialCount,
+                                    _orange,
+                                    Icons.timelapse_rounded,
+                                    "Kısmi Ödeyenler",
+                                  ),
+                                  const SizedBox(width: 10),
+                                  _statCard(
+                                    "Ödemeyenler",
+                                    _unpaidCount,
+                                    _red,
+                                    Icons.cancel_rounded,
+                                    "Ödemeyenler",
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // FİLTRELER
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Column(
+                            children: [
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: _surface,
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(color: _border),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.02),
+                                      blurRadius: 4,
+                                    ),
+                                  ],
+                                ),
+                                child: TextField(
+                                  style: const TextStyle(color: _textPrimary),
+                                  decoration: InputDecoration(
+                                    hintText: "Öğrenci ara...",
+                                    hintStyle: TextStyle(color: _textSecondary),
+                                    prefixIcon: Icon(
+                                      Icons.search_rounded,
+                                      color: _textSecondary,
+                                    ),
+                                    suffixIcon: searchQuery.isNotEmpty
+                                        ? IconButton(
+                                            icon: Icon(
+                                              Icons.clear,
+                                              color: _textSecondary,
+                                              size: 18,
+                                            ),
+                                            onPressed: () {
+                                              setState(() {
+                                                searchQuery = "";
+                                                _applyFilters();
+                                              });
+                                            },
+                                          )
+                                        : null,
+                                    border: InputBorder.none,
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      vertical: 14,
+                                      horizontal: 16,
+                                    ),
+                                  ),
+                                  onChanged: (v) {
+                                    setState(() {
+                                      searchQuery = v;
+                                      _applyFilters();
+                                    });
+                                  },
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _dropdown(
+                                      value: selectedGroupFilter,
+                                      items: groupNames,
+                                      icon: Icons.group_rounded,
+                                      onChanged: (v) {
+                                        setState(
+                                          () => selectedGroupFilter = v!,
+                                        );
+                                        _updateCounts();
+                                        _applyFilters();
+                                      },
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: _dropdown(
+                                      value: selectedMonthFilter,
+                                      items: monthOptions,
+                                      icon: Icons.calendar_month_rounded,
+                                      displayMap: (m) {
+                                        final p = m.split('-');
+                                        return "${_getMonthName(int.parse(p[1]))} ${p[0]}";
+                                      },
+                                      onChanged: (v) {
+                                        setState(
+                                          () => selectedMonthFilter = v!,
+                                        );
+                                        _updateCounts();
+                                        _applyFilters();
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        if (selectedPaymentFilter != "Tümü")
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                            child: Row(
+                              children: [
+                                const Text(
+                                  "Filtre:",
+                                  style: TextStyle(
+                                    color: _textSecondary,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                GestureDetector(
+                                  onTap: () {
+                                    setState(() {
+                                      selectedPaymentFilter = "Tümü";
+                                      _applyFilters();
+                                    });
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 5,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: _accent.withOpacity(0.1),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          selectedPaymentFilter,
+                                          style: TextStyle(
+                                            color: _accent,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        const Icon(
+                                          Icons.close,
+                                          color: _accent,
+                                          size: 14,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: _accent.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                child: Text(
+                                  "${filteredStudents.length} öğrenci",
+                                  style: TextStyle(
+                                    color: _accent,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  filteredStudents.isEmpty
+                      ? SliverFillRemaining(
+                          child: Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.search_off_rounded,
+                                  color: _textTertiary,
+                                  size: 56,
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  "Öğrenci bulunamadı",
+                                  style: TextStyle(
+                                    color: _textSecondary,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      : SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                          sliver: SliverList(
+                            delegate: SliverChildBuilderDelegate((_, i) {
+                              final s = filteredStudents[i];
+                              final status = _getCachedStatus(s.app);
+                              final color = _statusColor(status);
+                              final fee = _getCachedFee(s.app);
+                              final paid = _getCachedPaid(s.app);
+                              final pct = fee > 0
+                                  ? (paid / fee).clamp(0.0, 1.0)
+                                  : 0.0;
+                              final group = _getCachedGroupName(s.app);
+
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 12),
+                                decoration: BoxDecoration(
+                                  color: _surface,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: _border),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.03),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 2),
+                                    ),
+                                  ],
+                                ),
+                                child: Material(
+                                  color: Colors.transparent,
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(20),
+                                    onTap: () async {
+                                      final result = await Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) =>
+                                              PaymentScreen(student: s),
+                                        ),
+                                      );
+                                      if (result == true)
+                                        await Future.delayed(Duration.zero);
+                                    },
+                                    onLongPress: () => _showPaymentHistory(s),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(16),
+                                      child: Column(
+                                        children: [
+                                          Row(
+                                            children: [
+                                              Container(
+                                                width: 52,
+                                                height: 52,
+                                                decoration: BoxDecoration(
+                                                  color: color.withOpacity(0.1),
+                                                  borderRadius:
+                                                      BorderRadius.circular(18),
+                                                ),
+                                                child: Center(
+                                                  child: Text(
+                                                    s.first_name.isNotEmpty
+                                                        ? s.first_name[0]
+                                                              .toUpperCase()
+                                                        : "?",
+                                                    style: TextStyle(
+                                                      color: color,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      fontSize: 22,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                              const SizedBox(width: 14),
+                                              Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(
+                                                      "${s.first_name} ${s.last_name}",
+                                                      style: const TextStyle(
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                        fontSize: 16,
+                                                        color: _textPrimary,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(height: 4),
+                                                    Row(
+                                                      children: [
+                                                        Icon(
+                                                          Icons.group_rounded,
+                                                          size: 12,
+                                                          color: _textSecondary,
+                                                        ),
+                                                        const SizedBox(
+                                                          width: 4,
+                                                        ),
+                                                        Text(
+                                                          group,
+                                                          style: TextStyle(
+                                                            color:
+                                                                _textSecondary,
+                                                            fontSize: 12,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                              Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 10,
+                                                      vertical: 5,
+                                                    ),
+                                                decoration: BoxDecoration(
+                                                  color: color.withOpacity(0.1),
+                                                  borderRadius:
+                                                      BorderRadius.circular(12),
+                                                ),
+                                                child: Row(
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  children: [
+                                                    Icon(
+                                                      _statusIcon(status),
+                                                      color: color,
+                                                      size: 14,
+                                                    ),
+                                                    const SizedBox(width: 6),
+                                                    Text(
+                                                      _statusLabel(status),
+                                                      style: TextStyle(
+                                                        color: color,
+                                                        fontSize: 12,
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 14),
+                                          Container(
+                                            padding: const EdgeInsets.all(12),
+                                            decoration: BoxDecoration(
+                                              color: _surfaceLight,
+                                              borderRadius:
+                                                  BorderRadius.circular(14),
+                                            ),
+                                            child: Column(
+                                              children: [
+                                                Row(
+                                                  children: [
+                                                    _chip(
+                                                      "Aidat",
+                                                      "${fee.toStringAsFixed(0)} ₺",
+                                                      _textSecondary,
+                                                    ),
+                                                    const SizedBox(width: 8),
+                                                    _chip(
+                                                      "Ödenen",
+                                                      "${paid.toStringAsFixed(0)} ₺",
+                                                      color,
+                                                    ),
+                                                    if (fee - paid > 0 &&
+                                                        status != "paid") ...[
+                                                      const SizedBox(width: 8),
+                                                      _chip(
+                                                        "Kalan",
+                                                        "${(fee - paid).toStringAsFixed(0)} ₺",
+                                                        _orange,
+                                                      ),
+                                                    ],
+                                                    const Spacer(),
+                                                    Text(
+                                                      "${(pct * 100).toStringAsFixed(0)}%",
+                                                      style: TextStyle(
+                                                        color: color,
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                        fontSize: 14,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                                const SizedBox(height: 10),
+                                                ClipRRect(
+                                                  borderRadius:
+                                                      BorderRadius.circular(6),
+                                                  child: LinearProgressIndicator(
+                                                    value: pct,
+                                                    backgroundColor: _border,
+                                                    valueColor:
+                                                        AlwaysStoppedAnimation(
+                                                          color,
+                                                        ),
+                                                    minHeight: 6,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }, childCount: filteredStudents.length),
+                          ),
+                        ),
+                ],
+              ),
+            ),
+    );
+  }
+
+  Widget _statCard(
+    String label,
+    int count,
+    Color color,
+    IconData icon,
+    String filterValue,
+  ) {
+    final sel = selectedPaymentFilter == filterValue;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () {
+          setState(() {
+            selectedPaymentFilter = sel ? "Tümü" : filterValue;
+            _applyFilters();
+          });
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            color: sel ? color.withOpacity(0.1) : _surfaceLight,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: sel ? color : _border, width: 1.5),
+          ),
+          child: Column(
+            children: [
+              Icon(icon, color: sel ? color : _textSecondary, size: 22),
+              const SizedBox(height: 6),
+              Text(
+                "$count",
+                style: TextStyle(
+                  color: sel ? color : _textPrimary,
+                  fontSize: 26,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  color: sel ? color : _textSecondary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _dropdown({
+    required String value,
+    required List<String> items,
+    required IconData icon,
+    required ValueChanged<String?> onChanged,
+    String Function(String)? displayMap,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: _surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _border),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: value,
+          isExpanded: true,
+          dropdownColor: _surface,
+          icon: Icon(
+            Icons.keyboard_arrow_down_rounded,
+            color: _textSecondary,
+            size: 20,
+          ),
+          items: items.map((item) {
+            final display = displayMap != null ? displayMap(item) : item;
+            return DropdownMenuItem(
+              value: item,
+              child: Row(
+                children: [
+                  Icon(icon, color: _accent, size: 16),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      display,
+                      style: const TextStyle(color: _textPrimary, fontSize: 13),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+          onChanged: onChanged,
+        ),
+      ),
+    );
+  }
+
+  Widget _chip(String label, String value, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              color: _textSecondary,
+              fontSize: 10,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
             ),
           ),
         ],

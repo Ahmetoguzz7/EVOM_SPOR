@@ -2,7 +2,6 @@
   Bu sayfa, bir veli kullanıcısının çocuklarını hesabına bağlamasına olanak tanır.
   Veli, çocuğunun öğrenci ID'sini girerek onu sistemde arar ve bulursa çocuğunu hesabına bağlar.
 */
-/*
 import 'package:flutter/material.dart';
 import 'package:EVOM_SPOR/datapage/data_page/data.dart';
 import 'package:EVOM_SPOR/datapage/fetch_data_page.dart';
@@ -17,203 +16,232 @@ class CocukBaglamaSayfasi extends StatefulWidget {
 
 class _CocukBaglamaSayfasiState extends State<CocukBaglamaSayfasi> {
   final _idController = TextEditingController();
-  bool isSearching = false;
+  bool _isSearching = false;
+  String? _errorMessage;
 
-  void _cocukBul() async {
-    setState(() => isSearching = true);
+  @override
+  void dispose() {
+    _idController.dispose();
+    super.dispose();
+  }
 
-    List<Users> users = await GoogleSheetService.getUsers();
-    var student = users.firstWhere(
-      (u) => u.app == _idController.text.trim(),
-      orElse: () => Users(
-        app: "",
-        branches_id: "",
-        first_name: "",
-        last_name: "",
-        email: "",
-        phone: "",
-        password_hash: "",
-        role: "",
-        profile_photo_url: "",
-        amount: "",
-        b_date: "",
-        created_at: "",
-        last_login: "",
-        is_active: "",
-      ),
-    );
+  Future<void> _cocukBul() async {
+    final studentId = _idController.text.trim();
 
-    if (student.app.isNotEmpty) {
-      await GoogleSheetService.addParentStudent(widget.veli.app, student.app);
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Çocuğunuz başarıyla bağlandı!")),
-      );
-      Navigator.pop(context);
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Öğrenci bulunamadı. Lütfen ID'yi kontrol edin."),
-        ),
-      );
+    if (studentId.isEmpty) {
+      _showSnackBar("Lütfen öğrenci ID girin!", isError: true);
+      return;
     }
-    setState(() => isSearching = false);
-  }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text("Öğrenci Bağla")),
-      body: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          children: [
-            const Text(
-              "Çocuğunuzun sistemdeki öğrenci ID'sini girerek onu hesabınıza bağlayabilirsiniz.",
-            ),
-            const SizedBox(height: 20),
-            TextField(
-              controller: _idController,
-              decoration: const InputDecoration(
-                labelText: "Öğrenci ID",
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: isSearching ? null : _cocukBul,
-              child: const Text("Sistemi Sorgula ve Bağla"),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-*/
-import 'package:flutter/material.dart';
-import 'package:EVOM_SPOR/datapage/data_page/data.dart';
-import 'package:EVOM_SPOR/datapage/fetch_data_page.dart';
-
-class CocukBaglamaSayfasi extends StatefulWidget {
-  final Users veli;
-  const CocukBaglamaSayfasi({super.key, required this.veli});
-
-  @override
-  State<CocukBaglamaSayfasi> createState() => _CocukBaglamaSayfasiState();
-}
-
-class _CocukBaglamaSayfasiState extends State<CocukBaglamaSayfasi> {
-  final _idController = TextEditingController();
-  late Future<Users?> _searchFuture;
-  bool isSearching = false;
-
-  void _cocukBul() {
     setState(() {
-      isSearching = true;
-      _searchFuture = _searchStudent();
+      _isSearching = true;
+      _errorMessage = null;
     });
+
+    try {
+      // 🔥 PARALEL VERİ ÇEKME (HIZLI)
+      final allUsers = await GoogleSheetService.getUsersCached();
+
+      final student = allUsers.firstWhere(
+        (u) => u.app == studentId,
+        orElse: () => Users(
+          app: "",
+          branches_id: "",
+          first_name: "",
+          last_name: "",
+          email: "",
+          phone: "",
+          password_hash: "",
+          role: "",
+          profile_photo_url: "",
+          amount: "",
+          b_date: "",
+          created_at: "",
+          last_login: "",
+          is_active: "",
+        ),
+      );
+
+      if (student.app.isNotEmpty) {
+        // 🔥 ÖĞRENCİYİ BAĞLA
+        final success = await GoogleSheetService.addParentStudent(
+          widget.veli.app,
+          student.app,
+        );
+
+        if (success && mounted) {
+          _showSnackBar(
+            "✅ ${student.first_name} ${student.last_name} başarıyla bağlandı!",
+          );
+          Navigator.pop(context, true);
+        } else {
+          _showSnackBar("❌ Bağlama işlemi başarısız oldu!", isError: true);
+        }
+      } else {
+        _showSnackBar(
+          "❌ Öğrenci bulunamadı. Lütfen ID'yi kontrol edin.",
+          isError: true,
+        );
+      }
+    } catch (e) {
+      _showSnackBar("Bağlantı hatası: $e", isError: true);
+    } finally {
+      if (mounted) {
+        setState(() => _isSearching = false);
+      }
+    }
   }
 
-  Future<Users?> _searchStudent() async {
-    List<Users> users = await GoogleSheetService.getUsers();
-    var student = users.firstWhere(
-      (u) => u.app == _idController.text.trim(),
-      orElse: () => Users(
-        app: "",
-        branches_id: "",
-        first_name: "",
-        last_name: "",
-        email: "",
-        phone: "",
-        password_hash: "",
-        role: "",
-        profile_photo_url: "",
-        amount: "",
-        b_date: "",
-        created_at: "",
-        last_login: "",
-        is_active: "",
+  void _showSnackBar(String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.red : Colors.green,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
       ),
     );
-
-    if (student.app.isNotEmpty) {
-      await GoogleSheetService.addParentStudent(widget.veli.app, student.app);
-      return student;
-    } else {
-      return null;
-    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Öğrenci Bağla")),
+      backgroundColor: const Color(0xFFF8FAFC),
+      appBar: AppBar(
+        title: const Text(
+          "Öğrenci Bağla",
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 0,
+      ),
       body: Padding(
-        padding: const EdgeInsets.all(20.0),
+        padding: const EdgeInsets.all(24.0),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              "Çocuğunuzun sistemdeki öğrenci ID'sini girerek onu hesabınıza bağlayabilirsiniz.",
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.blue.shade50,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.blue.shade200),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.info_outline,
+                    color: Colors.blue.shade700,
+                    size: 24,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      "Çocuğunuzun sistemdeki öğrenci ID'sini girerek onu hesabınıza bağlayabilirsiniz.",
+                      style: TextStyle(
+                        color: Colors.blue.shade700,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 24),
             TextField(
               controller: _idController,
-              decoration: const InputDecoration(
+              enabled: !_isSearching,
+              style: const TextStyle(fontSize: 16),
+              decoration: InputDecoration(
                 labelText: "Öğrenci ID",
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: isSearching ? null : _cocukBul,
-              child: const Text("Sistemi Sorgula ve Bağla"),
-            ),
-            if (isSearching)
-              const Padding(
-                padding: EdgeInsets.all(20.0),
-                child: CircularProgressIndicator(),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_searchFuture != null) {
-      FutureBuilder<Users?>(
-        future: _searchFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.done) {
-            setState(() => isSearching = false);
-
-            if (snapshot.hasError) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text("Bir hata oluştu. Lütfen tekrar deneyin."),
+                hintText: "Örn: STU-001",
+                prefixIcon: const Icon(Icons.person_outline),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
                 ),
-              );
-            } else if (snapshot.data != null) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("Çocuğunuz başarıyla bağlandı!")),
-              );
-              Navigator.pop(context);
-            } else {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    "Öğrenci bulunamadı. Lütfen ID'yi kontrol edin.",
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(color: Colors.grey.shade300),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: const BorderSide(color: Colors.teal, width: 2),
+                ),
+              ),
+            ),
+            if (_errorMessage != null) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.red.shade200),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.error_outline,
+                      color: Colors.red.shade700,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _errorMessage!,
+                        style: TextStyle(
+                          color: Colors.red.shade700,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.teal,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
                   ),
                 ),
-              );
-            }
-          }
-          return const SizedBox.shrink();
-        },
-      );
-    }
+                onPressed: _isSearching ? null : _cocukBul,
+                child: _isSearching
+                    ? const SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.search, size: 20),
+                          SizedBox(width: 8),
+                          Text(
+                            "Sorgula ve Bağla",
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

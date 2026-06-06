@@ -6,8 +6,10 @@
   - İki adımlı doğrulama (2FA) ile admin ve muhasebeci güvenliği
   - "Beni Hatırla" özelliği ile kullanıcı deneyimini artırma
   - Anlamlı hata mesajları ve yükleme animasyonları
+  - Son giriş tarihi gösterimi (Türkçe format)
   */
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:EVOM_SPOR/parent/parent_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:EVOM_SPOR/datapage/data_page/data.dart';
@@ -37,6 +39,8 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
   bool _rememberMe = true;
   String? _generatedOtp;
   Users? _pendingUser;
+  String? _lastLoginEmail;
+  String? _lastLoginDate;
 
   // Animasyonlar
   late AnimationController _fadeController;
@@ -60,25 +64,39 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
     'veli',
   ];
 
+  // =========================================================================
+  // 🔥 TÜRKÇE TARİH FONKSİYONLARI
+  // =========================================================================
+
+  String _formatDateTurkish(DateTime date) {
+    final formatter = DateFormat('dd MMMM yyyy HH:mm', 'tr_TR');
+    return formatter.format(date);
+  }
+
+  String _formatDateShortTurkish(DateTime date) {
+    final formatter = DateFormat('dd/MM/yyyy HH:mm', 'tr_TR');
+    return formatter.format(date);
+  }
+
   @override
   void initState() {
     super.initState();
 
     // Ana fade animasyonu
     _fadeController = AnimationController(
-      duration: const Duration(milliseconds: 1200),
+      duration: const Duration(milliseconds: 800),
       vsync: this,
     );
 
     // Zıplama animasyonu
     _bounceController = AnimationController(
-      duration: const Duration(milliseconds: 1500),
+      duration: const Duration(milliseconds: 1200),
       vsync: this,
     )..repeat(reverse: true);
 
     // Kayma animasyonu
     _slideController = AnimationController(
-      duration: const Duration(milliseconds: 800),
+      duration: const Duration(milliseconds: 500),
       vsync: this,
     );
 
@@ -121,12 +139,21 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
     final savedEmail = prefs.getString('saved_email');
     final savedPassword = prefs.getString('saved_password');
     final rememberMe = prefs.getBool('remember_me') ?? false;
+    final lastLoginEmail = prefs.getString('last_login_email');
+    final lastLoginDate = prefs.getString('last_login_date');
+
+    if (lastLoginEmail != null && lastLoginDate != null && mounted) {
+      setState(() {
+        _lastLoginEmail = lastLoginEmail;
+        _lastLoginDate = lastLoginDate;
+      });
+    }
 
     if (rememberMe && savedEmail != null && savedPassword != null) {
       _emailController.text = savedEmail;
       _passwordController.text = savedPassword;
       _rememberMe = true;
-      Future.delayed(const Duration(milliseconds: 500), () {
+      Future.delayed(const Duration(milliseconds: 300), () {
         _handleLogin();
       });
     }
@@ -142,6 +169,21 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
       await prefs.remove('saved_email');
       await prefs.remove('saved_password');
       await prefs.setBool('remember_me', false);
+    }
+  }
+
+  Future<void> _saveLastLoginInfo(Users user) async {
+    final prefs = await SharedPreferences.getInstance();
+    final now = DateTime.now();
+    final formattedDate = _formatDateTurkish(now);
+    await prefs.setString('last_login_email', user.email);
+    await prefs.setString('last_login_date', formattedDate);
+
+    if (mounted) {
+      setState(() {
+        _lastLoginEmail = user.email;
+        _lastLoginDate = formattedDate;
+      });
     }
   }
 
@@ -223,6 +265,7 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
         }
 
         await _saveLoginCredentials(email, password);
+        await _saveLastLoginInfo(user);
 
         if (_requires2FA(user.role)) {
           await _start2FA(user);
@@ -251,7 +294,7 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
                 AdminDashboard(currentUserRole: 'admin', currentUser: user),
             transitionsBuilder: (_, a, __, c) =>
                 FadeTransition(opacity: a, child: c),
-            transitionDuration: const Duration(milliseconds: 500),
+            transitionDuration: const Duration(milliseconds: 300),
           ),
         );
       }
@@ -266,12 +309,14 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
             ),
             transitionsBuilder: (_, a, __, c) =>
                 FadeTransition(opacity: a, child: c),
-            transitionDuration: const Duration(milliseconds: 500),
+            transitionDuration: const Duration(milliseconds: 300),
           ),
         );
       }
     } else if (roleType == 'coach') {
       setState(() => _isLoading = true);
+
+      final stopwatch = Stopwatch()..start();
 
       final results = await Future.wait([
         GoogleSheetService.getCoachesCached(),
@@ -280,6 +325,9 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
         GoogleSheetService.getUsersCached(),
         GoogleSheetService.getPaymentsCached(),
       ]);
+
+      stopwatch.stop();
+      print("⏱️ Coach verileri ${stopwatch.elapsedMilliseconds}ms'de yüklendi");
 
       final coaches = results[0] as List<Coach>;
       final sports = results[1] as List<Sports>;
@@ -319,7 +367,7 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
             ),
             transitionsBuilder: (_, a, __, c) =>
                 FadeTransition(opacity: a, child: c),
-            transitionDuration: const Duration(milliseconds: 500),
+            transitionDuration: const Duration(milliseconds: 300),
           ),
         );
       }
@@ -331,7 +379,7 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
             pageBuilder: (_, __, ___) => UserInterface(user: user),
             transitionsBuilder: (_, a, __, c) =>
                 FadeTransition(opacity: a, child: c),
-            transitionDuration: const Duration(milliseconds: 500),
+            transitionDuration: const Duration(milliseconds: 300),
           ),
         );
       }
@@ -343,7 +391,7 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
             pageBuilder: (_, __, ___) => VeliAnaSayfa(veli: user),
             transitionsBuilder: (_, a, __, c) =>
                 FadeTransition(opacity: a, child: c),
-            transitionDuration: const Duration(milliseconds: 500),
+            transitionDuration: const Duration(milliseconds: 300),
           ),
         );
       }
@@ -394,7 +442,7 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // 🔥 ANİMASYONLU BASKETBOL TOPU
+                  // ANİMASYONLU BASKETBOL TOPU
                   FadeTransition(
                     opacity: _fadeAnimation,
                     child: ScaleTransition(
@@ -450,7 +498,7 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
                   ),
                   const SizedBox(height: 24),
 
-                  // 🔥 YAZI ANİMASYONU
+                  // YAZI ANİMASYONU
                   FadeTransition(
                     opacity: _fadeAnimation,
                     child: const Column(
@@ -494,9 +542,95 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
                       ],
                     ),
                   ),
-                  const SizedBox(height: 48),
+                  const SizedBox(height: 32),
 
-                  // 🔥 FORM
+                  // 🔥 SON GİRİŞ BİLGİSİ (Varsa - ALT ALTA)
+                  if (_lastLoginEmail != null &&
+                      _lastLoginDate != null &&
+                      !_isOtpMode)
+                    FadeTransition(
+                      opacity: _fadeAnimation,
+                      child: Container(
+                        margin: const EdgeInsets.only(bottom: 16),
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.08),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: Colors.orange.withOpacity(0.3),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.history_rounded,
+                                  size: 16,
+                                  color: Colors.orange[400],
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  "Son Oturum",
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.orange[300],
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Padding(
+                              padding: const EdgeInsets.only(left: 24),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.person_outline,
+                                        size: 12,
+                                        color: Colors.white54,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        _lastLoginEmail!,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: Colors.white70,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.access_time,
+                                        size: 12,
+                                        color: Colors.white54,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        _lastLoginDate!,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: Colors.white70,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                  // FORM
                   if (_isOtpMode) ...[
                     FadeTransition(
                       opacity: _fadeAnimation,
@@ -621,7 +755,7 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
                       pageBuilder: (_, __, ___) => const ForgotPasswordPage(),
                       transitionsBuilder: (_, a, __, c) =>
                           FadeTransition(opacity: a, child: c),
-                      transitionDuration: const Duration(milliseconds: 400),
+                      transitionDuration: const Duration(milliseconds: 300),
                     ),
                   );
                 },

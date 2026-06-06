@@ -130,4 +130,158 @@ class LocalNotificationService {
     );
   }
 }
-*/
+*/ // services/notification_service.dart
+
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+class NotificationService {
+  static final NotificationService _instance = NotificationService._internal();
+  factory NotificationService() => _instance;
+  NotificationService._internal();
+
+  final FlutterLocalNotificationsPlugin _notifications =
+      FlutterLocalNotificationsPlugin();
+
+  Set<String> _sentNotificationIds = {};
+
+  Future<void> init() async {
+    const AndroidInitializationSettings androidSettings =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+
+    const DarwinInitializationSettings iosSettings =
+        DarwinInitializationSettings();
+
+    const InitializationSettings settings = InitializationSettings(
+      android: androidSettings,
+      iOS: iosSettings,
+    );
+
+    await _notifications.initialize(settings: settings);
+
+    const AndroidNotificationChannel channel = AndroidNotificationChannel(
+      'duyurular_channel',
+      'Duyurular',
+      description: 'Yeni duyurular için bildirimler',
+      importance: Importance.high,
+      enableVibration: true,
+      playSound: true,
+    );
+
+    await _notifications
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >()
+        ?.createNotificationChannel(channel);
+
+    await _loadSentNotifications();
+  }
+
+  // 🔥 PAYLOAD'LU showNotification
+  Future<void> showNotification({
+    required String id,
+    required String title,
+    required String body,
+    String? type,
+    String? payload, // 🚀 PAYLOAD EKLENDİ
+  }) async {
+    if (_sentNotificationIds.contains(id)) {
+      print("🔔 Bildirim daha önce gönderildi: $id");
+      return;
+    }
+
+    try {
+      final int notificationId = id.hashCode;
+
+      final styleInformation = type == 'urgent'
+          ? BigTextStyleInformation(body, htmlFormatBigText: true)
+          : const BigTextStyleInformation('');
+
+      final AndroidNotificationDetails androidDetails =
+          AndroidNotificationDetails(
+            'duyurular_channel',
+            'Duyurular',
+            importance: Importance.max,
+            priority: Priority.high,
+            styleInformation: styleInformation,
+            autoCancel: true,
+            enableVibration: true,
+            playSound: true,
+            channelShowBadge: true,
+          );
+
+      final NotificationDetails details = NotificationDetails(
+        android: androidDetails,
+      );
+
+      // 🔥 payload ile gönder
+      await _notifications.show(
+        id: notificationId,
+        title: title,
+        body: body,
+        notificationDetails: details,
+        payload: payload, // payload burada kullanılıyor
+      );
+
+      await _saveSentNotification(id);
+      print("🔔 Bildirim gönderildi: $title (payload: $payload)");
+    } catch (e) {
+      print("❌ Bildirim hatası: $e");
+    }
+  }
+
+  // Basit bildirim (payload'suz)
+  Future<void> showSimpleNotification({
+    required String title,
+    required String body,
+  }) async {
+    try {
+      const AndroidNotificationDetails androidDetails =
+          AndroidNotificationDetails(
+            'duyurular_channel',
+            'Duyurular',
+            importance: Importance.high,
+            priority: Priority.high,
+          );
+
+      const NotificationDetails details = NotificationDetails(
+        android: androidDetails,
+      );
+
+      await _notifications.show(
+        id: DateTime.now().millisecondsSinceEpoch.remainder(100000),
+        title: title,
+        body: body,
+        notificationDetails: details,
+      );
+    } catch (e) {
+      print("❌ Basit bildirim hatası: $e");
+    }
+  }
+
+  Future<void> _loadSentNotifications() async {
+    final prefs = await SharedPreferences.getInstance();
+    final sentList = prefs.getStringList('sent_notifications') ?? [];
+    _sentNotificationIds = sentList.toSet();
+  }
+
+  Future<void> _saveSentNotification(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    _sentNotificationIds.add(id);
+    await prefs.setStringList(
+      'sent_notifications',
+      _sentNotificationIds.toList(),
+    );
+  }
+
+  Future<void> requestPermission() async {
+    if (await Permission.notification.isDenied) {
+      await Permission.notification.request();
+    }
+  }
+
+  Future<void> clearAllNotifications() async {
+    await _notifications.cancelAll();
+  }
+}

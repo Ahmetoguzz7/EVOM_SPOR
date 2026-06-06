@@ -29,10 +29,10 @@ class DataCache {
   final Map<String, Future> _pendingFetches = {};
 
   // Cache süreleri (saniye)
-  static const int CACHE_LONG = 3600; // 1 saat (şubeler, sporlar)
-  static const int CACHE_MEDIUM = 300; // 5 dakika (gruplar, öğrenciler)
-  static const int CACHE_SHORT = 60; // 1 dakika (yoklamalar, ödemeler)
-  static const int CACHE_VERY_SHORT = 30; // 30 saniye (bildirimler)
+  static const int CACHE_LONG = 600; // 1 saat (şubeler, sporlar)
+  static const int CACHE_MEDIUM = 120; // 5 dakika (gruplar, öğrenciler)
+  static const int CACHE_SHORT = 45; // 1 dakika (yoklamalar, ödemeler)
+  static const int CACHE_VERY_SHORT = 15; // 30 saniye (bildirimler)
 
   Future<T> getOrFetch<T>(
     String key,

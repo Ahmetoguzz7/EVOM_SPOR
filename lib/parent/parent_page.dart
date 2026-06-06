@@ -18,64 +18,73 @@ class VeliAnaSayfa extends StatefulWidget {
 }
 
 class _VeliAnaSayfaState extends State<VeliAnaSayfa> {
-  late Future<List<Users>> _childrenFuture;
+  late Future<Map<String, dynamic>> _dataFuture;
   List<Users> cocuklar = [];
   int _seciliCocukIndex = 0;
 
   // İstatistikler için
   Map<String, dynamic> _seciliCocukIstatistik = {};
 
+  // 🔥 Cache için
+  Map<String, Map<String, dynamic>> _statsCache = {};
+
   @override
   void initState() {
     super.initState();
-    _childrenFuture = _cocuklariGetir();
+    _dataFuture = _verileriParalelGetir();
   }
 
-  Future<List<Users>> _cocuklariGetir() async {
+  // 🚀 PARALEL VERİ ÇEKME (ÇOK HIZLI!)
+  Future<Map<String, dynamic>> _verileriParalelGetir() async {
+    final stopwatch = Stopwatch()..start();
+
     try {
-      final studentsByParent = await GoogleSheetService.getStudentsByParent(
-        widget.veli.app,
+      // 🔥 TÜM VERİLERİ PARALEL OLARAK ÇEK (3 işlem aynı anda!)
+      final results = await Future.wait([
+        GoogleSheetService.getStudentsByParent(widget.veli.app),
+        GoogleSheetService.getUsersCached(),
+        GoogleSheetService.getAttendancesCached(),
+      ]);
+
+      final studentsByParent = results[0] as List<ParentStudent>;
+      final allUsers = results[1] as List<Users>;
+      final allAttendances = results[2] as List<Attendance>;
+
+      stopwatch.stop();
+      print(
+        "⏱️ VeliAnaSayfa verileri PARALEL olarak ${stopwatch.elapsedMilliseconds}ms'de yüklendi",
       );
 
       List<String> myIds = studentsByParent.map((ps) => ps.student_id).toList();
+      List<Users> cocuklarList = [];
 
       if (myIds.isNotEmpty) {
-        List<Users> allUsers = await GoogleSheetService.getUsers();
-        cocuklar = allUsers.where((u) => myIds.contains(u.app)).toList();
+        cocuklarList = allUsers.where((u) => myIds.contains(u.app)).toList();
 
-        if (cocuklar.isNotEmpty) {
-          await _loadSelectedChildStats(cocuklar[0]);
-        }
-      }
-      return cocuklar;
-    } catch (e) {
-      print("Hata: $e");
-      return [];
-    }
-  }
+        // 🔥 TÜM ÇOCUKLARIN İSTATİSTİKLERİNİ ÖNCEDEN HESAPLA
+        for (var cocuk in cocuklarList) {
+          final cocukYoklamalari = allAttendances
+              .where((a) => a.student_id == cocuk.app)
+              .toList();
 
-  Future<void> _loadSelectedChildStats(Users cocuk) async {
-    try {
-      final attendances = await GoogleSheetService.getAttendances();
-      final cocukYoklamalari = attendances
-          .where((a) => a.student_id == cocuk.app)
-          .toList();
+          int attended = cocukYoklamalari
+              .where((a) => a.status == "TRUE")
+              .length;
+          int total = cocukYoklamalari.length;
+          double rate = total == 0 ? 0 : (attended / total) * 100;
 
-      int attended = cocukYoklamalari.where((a) => a.status == "TRUE").length;
-      int total = cocukYoklamalari.length;
-      double rate = total == 0 ? 0 : (attended / total) * 100;
-
-      if (mounted) {
-        setState(() {
-          _seciliCocukIstatistik = {
+          _statsCache[cocuk.app] = {
             'attended': attended,
             'total': total,
             'rate': rate,
           };
-        });
+        }
       }
+
+      return {'cocuklar': cocuklarList, 'success': true};
     } catch (e) {
-      print("İstatistik yüklenemedi: $e");
+      print("❌ Veri yükleme hatası: $e");
+      return {'cocuklar': <Users>[], 'success': false, 'error': e.toString()};
     }
   }
 
@@ -138,7 +147,7 @@ class _VeliAnaSayfaState extends State<VeliAnaSayfa> {
 
                       try {
                         List<Users> allUsers =
-                            await GoogleSheetService.getUsers();
+                            await GoogleSheetService.getUsersCached();
                         var found = allUsers
                             .where(
                               (u) =>
@@ -181,7 +190,9 @@ class _VeliAnaSayfaState extends State<VeliAnaSayfa> {
                             await GoogleSheetService.registerUser(yeniCocuk);
 
                             var updatedUsers =
-                                await GoogleSheetService.getUsers();
+                                await GoogleSheetService.getUsersCached(
+                                  forceRefresh: true,
+                                );
                             studentId = updatedUsers
                                 .firstWhere(
                                   (u) =>
@@ -206,7 +217,7 @@ class _VeliAnaSayfaState extends State<VeliAnaSayfa> {
 
                         Navigator.pop(context);
                         setState(() {
-                          _childrenFuture = _cocuklariGetir();
+                          _dataFuture = _verileriParalelGetir();
                         });
                       } catch (e) {
                         print("Hata: $e");
@@ -297,7 +308,6 @@ class _VeliAnaSayfaState extends State<VeliAnaSayfa> {
             await prefs.remove('saved_email');
             await prefs.remove('saved_password');
             await prefs.setBool('remember_me', false);
-
             Navigator.pushAndRemoveUntil(
               context,
               MaterialPageRoute(builder: (_) => const UnifiedLoginPage()),
@@ -313,28 +323,37 @@ class _VeliAnaSayfaState extends State<VeliAnaSayfa> {
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () {
+              setState(() {
+                _dataFuture = _verileriParalelGetir();
+              });
+            },
+          ),
+        ],
       ),
-
-      body: FutureBuilder<List<Users>>(
-        future: _childrenFuture,
+      body: FutureBuilder<Map<String, dynamic>>(
+        future: _dataFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return _buildLoadingScreen();
           }
 
-          if (snapshot.hasError) {
+          if (snapshot.hasError || (snapshot.data?['success'] == false)) {
             return Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   const Icon(Icons.error_outline, size: 64, color: Colors.red),
                   const SizedBox(height: 16),
-                  Text("Hata: ${snapshot.error}"),
+                  Text("Hata: ${snapshot.error ?? snapshot.data?['error']}"),
                   const SizedBox(height: 16),
                   ElevatedButton(
                     onPressed: () {
                       setState(() {
-                        _childrenFuture = _cocuklariGetir();
+                        _dataFuture = _verileriParalelGetir();
                       });
                     },
                     child: const Text("Tekrar Dene"),
@@ -344,43 +363,60 @@ class _VeliAnaSayfaState extends State<VeliAnaSayfa> {
             );
           }
 
-          final cocuklar = snapshot.data ?? [];
+          final cocuklarList = snapshot.data?['cocuklar'] as List<Users>? ?? [];
 
-          if (cocuklar.isEmpty) {
+          if (cocuklarList.isEmpty) {
             return _buildEmptyState();
           }
 
-          // Veriler geldikten sonra state'i güncelle (ilk yükleme için)
-          if (this.cocuklar != cocuklar) {
-            this.cocuklar = cocuklar;
+          // Verileri güncelle
+          if (cocuklar != cocuklarList) {
+            cocuklar = cocuklarList;
+            // İlk çocuğun istatistiklerini ayarla
+            if (cocuklar.isNotEmpty &&
+                _statsCache.containsKey(cocuklar[0].app)) {
+              _seciliCocukIstatistik = _statsCache[cocuklar[0].app]!;
+            }
           }
 
-          return SingleChildScrollView(
-            child: Column(
-              children: [
-                const SizedBox(height: 16),
-                // Sporcu Kartları Carousel
-                CarouselSlider(
-                  options: CarouselOptions(
-                    height: 200,
-                    enlargeCenterPage: true,
-                    enableInfiniteScroll: false,
-                    viewportFraction: 0.85,
-                    onPageChanged: (index, _) async {
-                      setState(() => _seciliCocukIndex = index);
-                      await _loadSelectedChildStats(cocuklar[index]);
-                    },
+          return RefreshIndicator(
+            onRefresh: () async {
+              setState(() {
+                _dataFuture = _verileriParalelGetir();
+              });
+              await _dataFuture;
+            },
+            child: SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              child: Column(
+                children: [
+                  const SizedBox(height: 16),
+                  CarouselSlider(
+                    options: CarouselOptions(
+                      height: 200,
+                      enlargeCenterPage: true,
+                      enableInfiniteScroll: false,
+                      viewportFraction: 0.85,
+                      onPageChanged: (index, _) async {
+                        setState(() {
+                          _seciliCocukIndex = index;
+                          final seciliCocuk = cocuklar[index];
+                          if (_statsCache.containsKey(seciliCocuk.app)) {
+                            _seciliCocukIstatistik =
+                                _statsCache[seciliCocuk.app]!;
+                          }
+                        });
+                      },
+                    ),
+                    items: cocuklar.map((c) => _buildSportCard(c)).toList(),
                   ),
-                  items: cocuklar.map((c) => _buildSportCard(c)).toList(),
-                ),
-                const SizedBox(height: 20),
-                // İstatistik Kartı
-                _buildStatsCard(),
-                const SizedBox(height: 20),
-                // Menü Grid
-                _buildMenuGrid(cocuklar[_seciliCocukIndex]),
-                const SizedBox(height: 100),
-              ],
+                  const SizedBox(height: 20),
+                  _buildStatsCard(),
+                  const SizedBox(height: 20),
+                  _buildMenuGrid(cocuklar[_seciliCocukIndex]),
+                  const SizedBox(height: 100),
+                ],
+              ),
             ),
           );
         },

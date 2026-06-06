@@ -1,963 +1,169 @@
-/*import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
-import 'package:EVOM_SPOR/datapage/data_page/data.dart';
-import 'package:EVOM_SPOR/datapage/fetch_data_page.dart';
-import 'package:EVOM_SPOR/managerpage/manager_payment_dekont.dart';
+import 'dart:async';
 
-class StudentListScreen extends StatefulWidget {
-  final List<Users> students;
-  final List<Payment> allPayments;
-  final List<Group> allGroups;
-  final List<GroupStudent> allRelations;
-
-  const StudentListScreen({
-    Key? key,
-    required this.students,
-    required this.allPayments,
-    required this.allGroups,
-    required this.allRelations,
-  }) : super(key: key);
-
-  @override
-  _StudentListScreenState createState() => _StudentListScreenState();
-}
-
-class _StudentListScreenState extends State<StudentListScreen> {
-  String selectedGroupFilter = "Tümü";
-  String selectedPaymentFilter = "Tümü";
-  String selectedMonthFilter = "";
-  String searchQuery = "";
-
-  List<Users> filteredStudents = [];
-  List<String> groupNames = [];
-  List<String> monthOptions = [];
-
-  bool isSendingNotifications = false;
-  bool _isLoading = true;
-
-  // 🔥 SAYAÇLAR
-  int _paidCount = 0;
-  int _partialCount = 0;
-  int _unpaidCount = 0;
-  int _totalCount = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _prepareFilters();
-    _updateCounts();
-    _applyFilters();
-    _isLoading = false;
-  }
-
-  void _prepareFilters() {
-    final groupIds = widget.students
-        .expand((student) => _getStudentGroups(student.app))
-        .toSet()
-        .toList();
-
-    groupNames = ["Tümü", ...groupIds.map((id) => _getGroupName(id))];
-
-    final now = DateTime.now();
-    monthOptions = [];
-    for (int i = -6; i <= 6; i++) {
-      final date = DateTime(now.year, now.month + i);
-      monthOptions.add(DateFormat('yyyy-MM').format(date));
-    }
-    selectedMonthFilter = monthOptions[6];
-    _totalCount = widget.students.length;
-  }
-
-  // 🔥 SAYAÇLARI GÜNCELLE
-  void _updateCounts() {
-    int paid = 0;
-    int partial = 0;
-    int unpaid = 0;
-
-    for (var student in widget.students) {
-      final status = _getPaymentStatus(student.app, selectedMonthFilter);
-      switch (status) {
-        case "paid":
-          paid++;
-          break;
-        case "partial":
-          partial++;
-          break;
-        case "unpaid":
-          unpaid++;
-          break;
-      }
-    }
-
-    setState(() {
-      _paidCount = paid;
-      _partialCount = partial;
-      _unpaidCount = unpaid;
-    });
-  }
-
-  String _getMonthName(int month) {
-    const months = [
-      "Ocak",
-      "Şubat",
-      "Mart",
-      "Nisan",
-      "Mayıs",
-      "Haziran",
-      "Temmuz",
-      "Ağustos",
-      "Eylül",
-      "Ekim",
-      "Kasım",
-      "Aralık",
-    ];
-    return months[month - 1];
-  }
-
-  List<String> _getStudentGroups(String studentId) {
-    final relations = widget.allRelations
-        .where((r) => r.student_id == studentId && r.is_active == "TRUE")
-        .toList();
-    return relations.map((r) => r.groups_id).toList();
-  }
-
-  String _getGroupName(String groupId) {
-    if (groupId.isEmpty) return "Grup Yok";
-    final group = widget.allGroups.firstWhere(
-      (g) => g.groups_id == groupId,
-      orElse: () => Group(
-        groups_id: "",
-        name: "Grup Yok",
-        coach_id: "",
-        branches_id: "",
-        sports_id: "",
-        schedule: "",
-        capacity: "",
-        monthly_fee: "",
-        is_active: "",
-      ),
-    );
-    return group.name.isEmpty ? "Grup Yok" : group.name;
-  }
-
-  String _getStudentGroupName(String studentId) {
-    final groupIds = _getStudentGroups(studentId);
-    if (groupIds.isEmpty) return "Grup Yok";
-    return _getGroupName(groupIds.first);
-  }
-
-  double _getStudentMonthlyFee(String studentId) {
-    final student = widget.students.firstWhere(
-      (s) => s.app == studentId,
-      orElse: () => Users(
-        app: "",
-        branches_id: "",
-        first_name: "",
-        last_name: "",
-        email: "",
-        phone: "",
-        password_hash: "",
-        role: "",
-        profile_photo_url: "",
-        amount: "0",
-        b_date: "",
-        created_at: "",
-        last_login: "",
-        is_active: "",
-      ),
-    );
-    return double.tryParse(student.amount) ?? 0;
-  }
-
-  double _getStudentTotalPaid(String studentId, String monthYear) {
-    final parts = monthYear.split('-');
-    if (parts.length != 2) return 0;
-
-    final targetYear = int.parse(parts[0]);
-    final targetMonth = int.parse(parts[1]);
-
-    double total = 0;
-    for (var p in widget.allPayments) {
-      if (p.student_id != studentId) continue;
-      if (p.status != "paid") continue;
-
-      final dueDate = DateTime.tryParse(p.due_date);
-      if (dueDate != null) {
-        if (dueDate.year == targetYear && dueDate.month == targetMonth) {
-          total += double.tryParse(p.amount) ?? 0;
-        }
-      }
-    }
-    return total;
-  }
-
-  String _getPaymentStatus(String studentId, String monthYear) {
-    final monthlyFee = _getStudentMonthlyFee(studentId);
-    final totalPaid = _getStudentTotalPaid(studentId, monthYear);
-
-    if (monthlyFee == 0) return "unpaid";
-    if (totalPaid >= monthlyFee) return "paid";
-    if (totalPaid > 0) return "partial";
-    return "unpaid";
-  }
-
-  Color _getPaymentColor(String status) {
-    switch (status) {
-      case "paid":
-        return Colors.green;
-      case "partial":
-        return Colors.blue;
-      case "unpaid":
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
-  }
-
-  String _getPaymentText(String status) {
-    switch (status) {
-      case "paid":
-        return "Ödedi";
-      case "partial":
-        return "Kısmi Ödedi";
-      case "unpaid":
-        return "Ödemedi";
-      default:
-        return "Belirsiz";
-    }
-  }
-
-  Future<void> _sendNotificationsToUnpaidStudents() async {
-    final unpaidStudents = filteredStudents.where((student) {
-      return _getPaymentStatus(student.app, selectedMonthFilter) == "unpaid";
-    }).toList();
-
-    if (unpaidStudents.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Bu ayda ödemeyen öğrenci bulunmuyor!"),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-
-    setState(() => isSendingNotifications = true);
-
-    int sentCount = 0;
-    final parts = selectedMonthFilter.split('-');
-    final year = parts[0];
-    final monthNum = int.parse(parts[1]);
-    final monthName = _getMonthName(monthNum);
-
-    for (var student in unpaidStudents) {
-      final monthlyFee = _getStudentMonthlyFee(student.app);
-
-      final notifData = {
-        "notifications_id":
-            "NTF-${DateTime.now().millisecondsSinceEpoch}-${student.app}",
-        "sender_id": "Admin",
-        "recipient_id": student.app.toString(),
-        "groups_id": "",
-        "title": "💰 Ödeme Hatırlatması",
-        "message":
-            "Sayın ${student.first_name} ${student.last_name}, $monthName $year ayına ait $monthlyFee TL aidat ödemeniz henüz alınmamıştır.",
-        "type": "payment_reminder",
-        "is_read": "FALSE",
-        "sent_at": DateTime.now().toIso8601String(),
-      };
-
-      final success = await GoogleSheetService.addNotification(notifData);
-      if (success) sentCount++;
-    }
-
-    setState(() => isSendingNotifications = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text("✅ $sentCount öğrenciye ödeme hatırlatması gönderildi"),
-        backgroundColor: Colors.green,
-      ),
-    );
-  }
-
-  void _applyFilters() {
-    setState(() {
-      filteredStudents = widget.students.where((student) {
-        if (searchQuery.isNotEmpty) {
-          final fullName = "${student.first_name} ${student.last_name}"
-              .toLowerCase();
-          if (!fullName.contains(searchQuery.toLowerCase())) return false;
-        }
-
-        if (selectedGroupFilter != "Tümü") {
-          final studentGroups = _getStudentGroups(student.app);
-          final groupId = widget.allGroups
-              .firstWhere(
-                (g) => g.name == selectedGroupFilter,
-                orElse: () => Group(
-                  groups_id: "",
-                  name: "",
-                  branches_id: '',
-                  coach_id: '',
-                  sports_id: '',
-                  schedule: '',
-                  capacity: '',
-                  monthly_fee: '',
-                  is_active: '',
-                ),
-              )
-              .groups_id;
-          if (!studentGroups.contains(groupId)) return false;
-        }
-
-        final status = _getPaymentStatus(student.app, selectedMonthFilter);
-
-        if (selectedPaymentFilter != "Tümü") {
-          if (selectedPaymentFilter == "Ödeyenler" && status != "paid")
-            return false;
-          if (selectedPaymentFilter == "Kısmi Ödeyenler" && status != "partial")
-            return false;
-          if (selectedPaymentFilter == "Ödemeyenler" && status != "unpaid")
-            return false;
-        }
-
-        return true;
-      }).toList();
-    });
-  }
-
-  void _showPaymentHistory(Users student) {
-    final history =
-        widget.allPayments.where((p) => p.student_id == student.app).toList()
-          ..sort((a, b) => b.paid_date.compareTo(a.paid_date));
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.6,
-        maxChildSize: 0.9,
-        minChildSize: 0.4,
-        expand: false,
-        builder: (context, scrollController) {
-          return Column(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: const BoxDecoration(
-                  border: Border(bottom: BorderSide(color: Colors.grey)),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      "${student.first_name} ${student.last_name} - Ödeme Geçmişi",
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () => Navigator.pop(ctx),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: history.isEmpty
-                    ? const Center(child: Text("Henüz ödeme kaydı yok"))
-                    : ListView.builder(
-                        controller: scrollController,
-                        itemCount: history.length,
-                        itemBuilder: (context, index) {
-                          final payment = history[index];
-                          return ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: Colors.teal.shade100,
-                              child: Icon(Icons.receipt, color: Colors.teal),
-                            ),
-                            title: Text("${payment.amount} TL"),
-                            subtitle: Text(
-                              "${payment.payment_method} - ${_formatDate(payment.paid_date)}",
-                            ),
-                            onTap: () => _showPaymentDetail(payment),
-                          );
-                        },
-                      ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  void _showPaymentDetail(Payment payment) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Ödeme Detayı"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              "Tutar: ${payment.amount} TL",
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            Text("Yöntem: ${payment.payment_method}"),
-            Text("Tarih: ${_formatDate(payment.paid_date)}"),
-            if (payment.note.isNotEmpty) Text("Not: ${payment.note}"),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text("Kapat"),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _formatDate(String dateStr) {
-    if (dateStr.isEmpty) return "Belirsiz";
-    try {
-      final date = DateTime.parse(dateStr);
-      return DateFormat('dd/MM/yyyy').format(date);
-    } catch (e) {
-      return dateStr;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF1F5F9),
-      appBar: AppBar(
-        title: const Text(
-          "Öğrenci Listesi",
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        backgroundColor: Colors.teal,
-        elevation: 0,
-        actions: [
-          if (_unpaidCount > 0)
-            IconButton(
-              icon: const Icon(Icons.notifications_active, color: Colors.white),
-              onPressed: _sendNotificationsToUnpaidStudents,
-              tooltip: "Ödemeyenlere bildirim gönder",
-            ),
-        ],
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: Colors.teal))
-          : Column(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  color: Colors.white,
-                  child: Column(
-                    children: [
-                      TextField(
-                        decoration: InputDecoration(
-                          labelText: "İsim veya soyisim ile ara...",
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          prefixIcon: const Icon(Icons.search),
-                          suffixIcon: searchQuery.isNotEmpty
-                              ? IconButton(
-                                  icon: const Icon(Icons.clear),
-                                  onPressed: () {
-                                    setState(() {
-                                      searchQuery = "";
-                                      _applyFilters();
-                                    });
-                                  },
-                                )
-                              : null,
-                        ),
-                        onChanged: (value) {
-                          setState(() {
-                            searchQuery = value;
-                            _applyFilters();
-                          });
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        value: selectedGroupFilter,
-                        decoration: const InputDecoration(
-                          labelText: "Grup",
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.group),
-                        ),
-                        items: groupNames
-                            .map(
-                              (g) => DropdownMenuItem(value: g, child: Text(g)),
-                            )
-                            .toList(),
-                        onChanged: (val) {
-                          setState(() {
-                            selectedGroupFilter = val!;
-                            _applyFilters();
-                            _updateCounts();
-                          });
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        value: selectedMonthFilter,
-                        decoration: const InputDecoration(
-                          labelText: "Ay",
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.calendar_month),
-                        ),
-                        items: monthOptions.map((m) {
-                          final parts = m.split('-');
-                          final monthName = _getMonthName(int.parse(parts[1]));
-                          return DropdownMenuItem(
-                            value: m,
-                            child: Text("$monthName ${parts[0]}"),
-                          );
-                        }).toList(),
-                        onChanged: (val) {
-                          setState(() {
-                            selectedMonthFilter = val!;
-                            _applyFilters();
-                            _updateCounts();
-                          });
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      // 🔥 SAYILI FİLTRE BUTONLARI
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          _buildFilterChip(
-                            "Tümü",
-                            _totalCount,
-                            Colors.grey,
-                            "Tümü",
-                          ),
-                          _buildFilterChip(
-                            "Ödeyenler",
-                            _paidCount,
-                            Colors.green,
-                            "Ödeyenler",
-                          ),
-                          _buildFilterChip(
-                            "Kısmi Ödeyenler",
-                            _partialCount,
-                            Colors.blue,
-                            "Kısmi Ödeyenler",
-                          ),
-                          _buildFilterChip(
-                            "Ödemeyenler",
-                            _unpaidCount,
-                            Colors.red,
-                            "Ödemeyenler",
-                          ),
-                        ],
-                      ),
-                      if (_unpaidCount > 0) ...[
-                        const SizedBox(height: 12),
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.red.shade50,
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: Colors.red.shade200),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.warning_amber,
-                                color: Colors.red.shade700,
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Text(
-                                  "$_unpaidCount öğrenci bu ay ödeme yapmamış. Bildirim göndermek için sağ üstteki butonu kullanın.",
-                                  style: TextStyle(
-                                    color: Colors.red.shade700,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                if (isSendingNotifications) const LinearProgressIndicator(),
-                Expanded(
-                  child: filteredStudents.isEmpty
-                      ? const Center(child: Text("Öğrenci bulunamadı"))
-                      : ListView.builder(
-                          padding: const EdgeInsets.all(12),
-                          itemCount: filteredStudents.length,
-                          itemBuilder: (context, index) {
-                            final student = filteredStudents[index];
-                            final status = _getPaymentStatus(
-                              student.app,
-                              selectedMonthFilter,
-                            );
-                            final color = _getPaymentColor(status);
-                            final monthlyFee = _getStudentMonthlyFee(
-                              student.app,
-                            );
-                            final paidAmount = _getStudentTotalPaid(
-                              student.app,
-                              selectedMonthFilter,
-                            );
-                            final remainingDebt = monthlyFee - paidAmount;
-                            final groupName = _getStudentGroupName(student.app);
-
-                            return Card(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                side: BorderSide(color: color, width: 2),
-                              ),
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(12),
-                                onTap: () async {
-                                  await Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) =>
-                                          PaymentScreen(student: student),
-                                    ),
-                                  );
-                                  _updateCounts();
-                                  _applyFilters();
-                                },
-                                onLongPress: () => _showPaymentHistory(student),
-                                child: Container(
-                                  padding: const EdgeInsets.all(16),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          CircleAvatar(
-                                            backgroundColor: color.withOpacity(
-                                              0.2,
-                                            ),
-                                            child: Text(
-                                              student.first_name.isNotEmpty
-                                                  ? student.first_name[0]
-                                                        .toUpperCase()
-                                                  : "?",
-                                              style: TextStyle(
-                                                color: color,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  "${student.first_name} ${student.last_name}",
-                                                  style: const TextStyle(
-                                                    fontSize: 16,
-                                                    fontWeight: FontWeight.bold,
-                                                  ),
-                                                ),
-                                                Text(
-                                                  student.email,
-                                                  style: TextStyle(
-                                                    color: Colors.grey[600],
-                                                    fontSize: 12,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 8,
-                                              vertical: 4,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: color.withOpacity(0.2),
-                                              borderRadius:
-                                                  BorderRadius.circular(12),
-                                            ),
-                                            child: Text(
-                                              _getPaymentText(status),
-                                              style: TextStyle(
-                                                color: color,
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 12),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 4,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: Colors.grey.shade100,
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                        ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(
-                                              Icons.group,
-                                              size: 14,
-                                              color: Colors.grey[600],
-                                            ),
-                                            const SizedBox(width: 4),
-                                            Text(
-                                              groupName,
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.grey[600],
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      const SizedBox(height: 12),
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: _buildInfoChip(
-                                              Icons.money,
-                                              "Aylık: ${monthlyFee.toStringAsFixed(0)} TL",
-                                              Colors.grey.shade100,
-                                              Colors.grey.shade700,
-                                            ),
-                                          ),
-                                          Expanded(
-                                            child: _buildInfoChip(
-                                              Icons.payment,
-                                              "Ödenen: ${paidAmount.toStringAsFixed(0)} TL",
-                                              color.withOpacity(0.1),
-                                              color,
-                                            ),
-                                          ),
-                                          if (remainingDebt > 0 &&
-                                              status != "paid")
-                                            Expanded(
-                                              child: _buildInfoChip(
-                                                Icons.warning,
-                                                "Kalan: ${remainingDebt.toStringAsFixed(0)} TL",
-                                                Colors.orange.shade50,
-                                                Colors.orange.shade700,
-                                              ),
-                                            ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 8),
-                                      if (monthlyFee > 0)
-                                        LinearProgressIndicator(
-                                          value: (paidAmount / monthlyFee)
-                                              .clamp(0.0, 1.0),
-                                          backgroundColor: Colors.grey.shade200,
-                                          color: color,
-                                          borderRadius: BorderRadius.circular(
-                                            4,
-                                          ),
-                                          minHeight: 6,
-                                        ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        "Uzun basarak ödeme geçmişini görüntüleyin",
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          color: Colors.grey[500],
-                                        ),
-                                        textAlign: TextAlign.center,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                ),
-              ],
-            ),
-    );
-  }
-
-  // 🔥 SAYI GÖSTEREN FİLTRE BUTONU
-  Widget _buildFilterChip(
-    String label,
-    int count,
-    Color color,
-    String filterValue,
-  ) {
-    bool isSelected = selectedPaymentFilter == filterValue;
-    return FilterChip(
-      label: Text("$label ($count)"),
-      selected: isSelected,
-      onSelected: (selected) {
-        setState(() {
-          selectedPaymentFilter = selected ? filterValue : "Tümü";
-          _applyFilters();
-        });
-      },
-      backgroundColor: Colors.grey.shade200,
-      selectedColor: color.withOpacity(0.2),
-      checkmarkColor: color,
-      labelStyle: TextStyle(
-        color: isSelected ? color : Colors.grey.shade700,
-        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-      ),
-    );
-  }
-
-  Widget _buildInfoChip(
-    IconData icon,
-    String label,
-    Color bgColor,
-    Color textColor,
-  ) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 14, color: textColor),
-          const SizedBox(width: 4),
-          Expanded(
-            child: Text(
-              label,
-              style: TextStyle(fontSize: 11, color: textColor),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-*/
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:EVOM_SPOR/datapage/data_page/data.dart';
 import 'package:EVOM_SPOR/datapage/fetch_data_page.dart';
-import 'package:EVOM_SPOR/managerpage/manager_payment_dekont.dart';
 
-class StudentListScreen extends StatefulWidget {
+class PaymentReminderScreen extends StatefulWidget {
   final List<Users> students;
   final List<Payment> allPayments;
-  final List<Group> allGroups;
-  final List<GroupStudent> allRelations;
+  final List<Group> groups;
+  final List<GroupStudent> groupStudents;
 
-  const StudentListScreen({
+  const PaymentReminderScreen({
     Key? key,
     required this.students,
     required this.allPayments,
-    required this.allGroups,
-    required this.allRelations,
+    required this.groups,
+    required this.groupStudents,
   }) : super(key: key);
 
   @override
-  _StudentListScreenState createState() => _StudentListScreenState();
+  _PaymentReminderScreenState createState() => _PaymentReminderScreenState();
 }
 
-class _StudentListScreenState extends State<StudentListScreen> {
-  String selectedGroupFilter = "Tümü";
-  String selectedPaymentFilter = "Tümü";
-  String selectedMonthFilter = "";
-  String searchQuery = "";
+class _PaymentReminderScreenState extends State<PaymentReminderScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
 
-  List<Users> filteredStudents = [];
-  List<String> groupNames = [];
-  List<String> monthOptions = [];
+  List<Users> firstHalfStudents = [];
+  List<Users> secondHalfStudents = [];
 
-  bool isSendingNotifications = false;
-  bool _isLoading = true;
+  List<Users> filteredFirstHalfStudents = [];
+  List<Users> filteredSecondHalfStudents = [];
+  String _searchQuery = "";
+  final TextEditingController _searchController = TextEditingController();
 
-  // SAYAÇLAR
-  int _paidCount = 0;
-  int _partialCount = 0;
-  int _unpaidCount = 0;
-  int _totalCount = 0;
+  bool isLoading = true;
+  DateTime _selectedDate = DateTime.now();
+
+  Map<String, double> _feeCache = {};
+  Map<String, double> _paidCache = {};
+  Map<String, String> _statusCache = {};
+
+  // FIX: Öğrencinin TÜM gruplarını tutar (virgülle ayrılmış)
+  Map<String, String> _studentGroupCache = {};
+
+  static const Color _bg = Color(0xFFF1F5F9);
+  static const Color _surface = Colors.white;
+  static const Color _accent = Color(0xFF0EA5E9);
+  static const Color _success = Color(0xFF22C55E);
+  static const Color _warning = Color(0xFFF97316);
+  static const Color _danger = Color(0xFFEF4444);
+  static const Color _textPrimary = Color(0xFF0F172A);
+  static const Color _textSecondary = Color(0xFF64748B);
+  static const Color _border = Color(0xFFE2E8F0);
 
   @override
   void initState() {
     super.initState();
-    _prepareFilters();
-    _updateCounts();
-    _applyFilters();
-    _isLoading = false;
+    _tabController = TabController(length: 2, vsync: this);
+    _loadGroupCache();
+    _loadDataAsync();
+    _searchController.addListener(_onSearchChanged);
   }
 
-  void _prepareFilters() {
-    final groupIds = widget.students
-        .expand((student) => _getStudentGroups(student.app))
-        .toSet()
-        .toList();
-
-    groupNames = ["Tümü", ...groupIds.map((id) => _getGroupName(id))];
-
-    final now = DateTime.now();
-    monthOptions = [];
-    for (int i = -6; i <= 6; i++) {
-      final date = DateTime(now.year, now.month + i);
-      monthOptions.add(DateFormat('yyyy-MM').format(date));
-    }
-    selectedMonthFilter = monthOptions[6];
-    _totalCount = widget.students.length;
+  @override
+  void dispose() {
+    _tabController.dispose();
+    _feeCache.clear();
+    _paidCache.clear();
+    _statusCache.clear();
+    _studentGroupCache.clear();
+    _searchController.removeListener(_onSearchChanged);
+    _searchController.dispose();
+    _debounceTimer?.cancel();
+    super.dispose();
   }
 
-  void _updateCounts() {
-    int paid = 0;
-    int partial = 0;
-    int unpaid = 0;
-
+  // =========================================================================
+  // FIX: Öğrencinin TÜM aktif gruplarını virgülle birleştir
+  // =========================================================================
+  void _loadGroupCache() {
     for (var student in widget.students) {
-      final status = _getPaymentStatus(student.app, selectedMonthFilter);
-      switch (status) {
-        case "paid":
-          paid++;
-          break;
-        case "partial":
-          partial++;
-          break;
-        case "unpaid":
-          unpaid++;
-          break;
+      final groupRelations = widget.groupStudents
+          .where(
+            (gs) =>
+                gs.student_id == student.app &&
+                gs.is_active.toString().toUpperCase() == "TRUE",
+          )
+          .toList();
+
+      if (groupRelations.isNotEmpty) {
+        final groupNames = groupRelations
+            .map((rel) {
+              final group = widget.groups.firstWhere(
+                (g) => g.groups_id == rel.groups_id,
+                orElse: () => Group(
+                  groups_id: "",
+                  name: "",
+                  is_active: "",
+                  branches_id: '',
+                  coach_id: '',
+                  sports_id: '',
+                  schedule: '',
+                  capacity: '',
+                  monthly_fee: '',
+                ),
+              );
+              return group.name;
+            })
+            .where((name) => name.isNotEmpty)
+            .toList();
+
+        _studentGroupCache[student.app] = groupNames.isNotEmpty
+            ? groupNames.join(", ")
+            : "Grup Yok";
+      } else {
+        _studentGroupCache[student.app] = "Grup Yok";
       }
     }
+  }
 
-    setState(() {
-      _paidCount = paid;
-      _partialCount = partial;
-      _unpaidCount = unpaid;
+  String _getStudentGroup(String studentId) =>
+      _studentGroupCache[studentId] ?? "Grup Yok";
+
+  Timer? _debounceTimer;
+
+  void _onSearchChanged() {
+    if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+      setState(() {
+        _searchQuery = _searchController.text.trim().toLowerCase();
+        _applyFilter();
+      });
     });
   }
 
-  String _getMonthName(int month) {
+  void _applyFilter() {
+    if (_searchQuery.isEmpty) {
+      filteredFirstHalfStudents = List.from(firstHalfStudents);
+      filteredSecondHalfStudents = List.from(secondHalfStudents);
+    } else {
+      filteredFirstHalfStudents = firstHalfStudents.where((s) {
+        final name = "${s.first_name} ${s.last_name}".toLowerCase();
+        final group = _getStudentGroup(s.app).toLowerCase();
+        return name.contains(_searchQuery) || group.contains(_searchQuery);
+      }).toList();
+
+      filteredSecondHalfStudents = secondHalfStudents.where((s) {
+        final name = "${s.first_name} ${s.last_name}".toLowerCase();
+        final group = _getStudentGroup(s.app).toLowerCase();
+        return name.contains(_searchQuery) || group.contains(_searchQuery);
+      }).toList();
+    }
+  }
+
+  void _loadDataAsync() {
+    setState(() => isLoading = true);
+    Future.microtask(() async {
+      await _filterStudentsAsync();
+      if (mounted) setState(() => isLoading = false);
+    });
+  }
+
+  String _getMonthNameTurkish(int month) {
     const months = [
       "Ocak",
       "Şubat",
@@ -975,36 +181,157 @@ class _StudentListScreenState extends State<StudentListScreen> {
     return months[month - 1];
   }
 
-  List<String> _getStudentGroups(String studentId) {
-    final relations = widget.allRelations
-        .where((r) => r.student_id == studentId && r.is_active == "TRUE")
-        .toList();
-    return relations.map((r) => r.groups_id).toList();
+  String _getMonthShort(int month) {
+    const months = [
+      "Oca",
+      "Şub",
+      "Mar",
+      "Nis",
+      "May",
+      "Haz",
+      "Tem",
+      "Ağu",
+      "Eyl",
+      "Eki",
+      "Kas",
+      "Ara",
+    ];
+    return months[month - 1];
   }
 
-  String _getGroupName(String groupId) {
-    if (groupId.isEmpty) return "Grup Yok";
-    final group = widget.allGroups.firstWhere(
-      (g) => g.groups_id == groupId,
-      orElse: () => Group(
-        groups_id: "",
-        name: "Grup Yok",
-        coach_id: "",
-        branches_id: "",
-        sports_id: "",
-        schedule: "",
-        capacity: "",
-        monthly_fee: "",
-        is_active: "",
+  Future<void> _selectMonth() async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+      helpText: 'Ay Seçin',
+      cancelText: 'İptal',
+      confirmText: 'Seç',
+    );
+    if (picked != null) {
+      setState(() {
+        _selectedDate = DateTime(picked.year, picked.month);
+        _feeCache.clear();
+        _paidCache.clear();
+        _statusCache.clear();
+        _searchQuery = "";
+        _searchController.clear();
+      });
+      await _filterStudentsAsync();
+    }
+  }
+
+  // =========================================================================
+  // FIX: Sadece "unpaid" olanları filtrele — partial ve paid dahil değil
+  // =========================================================================
+  Future<void> _filterStudentsAsync() async {
+    _feeCache.clear();
+    _paidCache.clear();
+    _statusCache.clear();
+
+    final first = <Users>[];
+    final second = <Users>[];
+
+    for (var student in widget.students) {
+      // Aktif olmayan öğrencileri atla
+      if (student.is_active.toString().toUpperCase() != "TRUE") continue;
+
+      final status = _getPaymentStatusForMonth(student.app, _selectedDate);
+
+      // FIX: Sadece tamamen ödemeyenler (unpaid) — partial, paid, unknown dahil değil
+      if (status != "unpaid") continue;
+
+      final date = _parseDateString(student.created_at);
+      if (date == null) continue;
+
+      if (date.day <= 14) {
+        first.add(student);
+      } else {
+        second.add(student);
+      }
+    }
+
+    // İsme göre sırala
+    first.sort(
+      (a, b) => "${a.first_name} ${a.last_name}".compareTo(
+        "${b.first_name} ${b.last_name}",
       ),
     );
-    return group.name.isEmpty ? "Grup Yok" : group.name;
+    second.sort(
+      (a, b) => "${a.first_name} ${a.last_name}".compareTo(
+        "${b.first_name} ${b.last_name}",
+      ),
+    );
+
+    if (mounted) {
+      setState(() {
+        firstHalfStudents = first;
+        secondHalfStudents = second;
+        _applyFilter();
+      });
+    }
   }
 
-  String _getStudentGroupName(String studentId) {
-    final groupIds = _getStudentGroups(studentId);
-    if (groupIds.isEmpty) return "Grup Yok";
-    return _getGroupName(groupIds.first);
+  // =========================================================================
+  // ÖDEME DURUM HESABI
+  // =========================================================================
+  String _getPaymentStatusForMonth(String studentId, DateTime month) {
+    final fee = _getStudentMonthlyFee(studentId);
+    final paid = _getStudentTotalPaidForMonth(studentId, month);
+    if (fee == 0) return "unknown";
+    if (paid >= fee) return "paid";
+    if (paid > 0) return "partial";
+    return "unpaid";
+  }
+
+  double _getStudentTotalPaidForMonth(String studentId, DateTime month) {
+    double total = 0;
+    for (var payment in widget.allPayments) {
+      if (payment.student_id != studentId) continue;
+      final status = payment.status.toString().toUpperCase();
+      if (status != "PAID" && status != "TRUE") continue;
+      try {
+        String dateStr = payment.due_date; // due_date ile eşleştir
+        if (dateStr.isEmpty) dateStr = payment.paid_date;
+        if (dateStr.contains('T')) dateStr = dateStr.split('T')[0];
+        final parts = dateStr.split('-');
+        if (parts.length >= 2) {
+          final y = int.tryParse(parts[0]) ?? 0;
+          final m = int.tryParse(parts[1]) ?? 0;
+          if (y == month.year && m == month.month) {
+            total += double.tryParse(payment.amount) ?? 0;
+          }
+        }
+      } catch (_) {}
+    }
+    return total;
+  }
+
+  double _getCachedFee(String studentId) {
+    if (_feeCache.containsKey(studentId)) return _feeCache[studentId]!;
+    final fee = _getStudentMonthlyFee(studentId);
+    _feeCache[studentId] = fee;
+    return fee;
+  }
+
+  DateTime? _parseDateString(String dateStr) {
+    if (dateStr.isEmpty) return null;
+    try {
+      if (dateStr.contains('T')) return DateTime.parse(dateStr);
+      if (dateStr.contains('-') && dateStr.length >= 10) {
+        final parts = dateStr.split('-');
+        if (parts.length == 3) {
+          final y = int.tryParse(parts[0]);
+          final m = int.tryParse(parts[1]);
+          final d = int.tryParse(parts[2]);
+          if (y != null && m != null && d != null) return DateTime(y, m, d);
+        }
+      }
+      return DateTime.tryParse(dateStr);
+    } catch (_) {
+      return null;
+    }
   }
 
   double _getStudentMonthlyFee(String studentId) {
@@ -1030,786 +357,742 @@ class _StudentListScreenState extends State<StudentListScreen> {
     return double.tryParse(student.amount) ?? 0;
   }
 
-  double _getStudentTotalPaid(String studentId, String monthYear) {
-    final parts = monthYear.split('-');
-    if (parts.length != 2) return 0;
+  // =========================================================================
+  // BİLDİRİM GÖNDERİMİ
+  // =========================================================================
+  Future<void> _sendReminder(Users student) async {
+    final fee = _getCachedFee(student.app);
+    final monthName = _getMonthNameTurkish(_selectedDate.month);
+    final year = _selectedDate.year;
 
-    final targetYear = int.parse(parts[0]);
-    final targetMonth = int.parse(parts[1]);
+    final message =
+        "Sayın ${student.first_name} ${student.last_name}, $monthName $year ayına ait ${fee.toStringAsFixed(0)} TL ödemeniz alınmamıştır.";
 
-    double total = 0;
-    for (var p in widget.allPayments) {
-      if (p.student_id != studentId) continue;
-      if (p.status != "paid") continue;
+    final success = await GoogleSheetService.addNotification({
+      "notifications_id":
+          "NTF-${DateTime.now().millisecondsSinceEpoch}-${student.app}",
+      "sender_id": "Admin",
+      "recipient_id": student.app,
+      "groups_id": "",
+      "title": "💰 Ödeme Hatırlatma",
+      "message": message,
+      "type": "payment_reminder",
+      "is_read": "FALSE",
+      "sent_at": DateTime.now().toIso8601String(),
+    });
 
-      final dueDate = DateTime.tryParse(p.due_date);
-      if (dueDate != null) {
-        if (dueDate.year == targetYear && dueDate.month == targetMonth) {
-          total += double.tryParse(p.amount) ?? 0;
-        }
-      }
-    }
-    return total;
+    _showSnack(
+      success
+          ? "✅ ${student.first_name} ${student.last_name} - Hatırlatma gönderildi"
+          : "❌ Gönderim başarısız!",
+      success ? _success : _danger,
+    );
   }
 
-  String _getPaymentStatus(String studentId, String monthYear) {
-    final monthlyFee = _getStudentMonthlyFee(studentId);
-    final totalPaid = _getStudentTotalPaid(studentId, monthYear);
-
-    if (monthlyFee == 0) return "unpaid";
-    if (totalPaid >= monthlyFee) return "paid";
-    if (totalPaid > 0) return "partial";
-    return "unpaid";
-  }
-
-  Color _getPaymentColor(String status) {
-    switch (status) {
-      case "paid":
-        return Colors.green;
-      case "partial":
-        return Colors.blue;
-      case "unpaid":
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
-  }
-
-  String _getPaymentText(String status) {
-    switch (status) {
-      case "paid":
-        return "Ödedi";
-      case "partial":
-        return "Kısmi Ödedi";
-      case "unpaid":
-        return "Ödemedi";
-      default:
-        return "Belirsiz";
-    }
-  }
-
-  Future<void> _sendNotificationsToUnpaidStudents() async {
-    final unpaidStudents = filteredStudents.where((student) {
-      return _getPaymentStatus(student.app, selectedMonthFilter) == "unpaid";
-    }).toList();
-
-    if (unpaidStudents.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Bu ayda ödemeyen öğrenci bulunmuyor!"),
-          backgroundColor: Colors.orange,
-        ),
-      );
+  // FIX: Tümüne gönder — sadece listedeki (zaten unpaid olan) öğrencilere gönder
+  // Gönderilen kişi sayısını doğru göster
+  Future<void> _sendReminderToAll(
+    List<Users> students,
+    String groupLabel,
+  ) async {
+    if (students.isEmpty) {
+      _showSnack("Gönderilecek öğrenci yok!", _warning);
       return;
     }
 
-    setState(() => isSendingNotifications = true);
-
-    int sentCount = 0;
-    final parts = selectedMonthFilter.split('-');
-    final year = parts[0];
-    final monthNum = int.parse(parts[1]);
-    final monthName = _getMonthName(monthNum);
-
-    for (var student in unpaidStudents) {
-      final monthlyFee = _getStudentMonthlyFee(student.app);
-
-      final notifData = {
-        "notifications_id":
-            "NTF-${DateTime.now().millisecondsSinceEpoch}-${student.app}",
-        "sender_id": "Admin",
-        "recipient_id": student.app.toString(),
-        "groups_id": "",
-        "title": "💰 Ödeme Hatırlatması",
-        "message":
-            "Sayın ${student.first_name} ${student.last_name}, $monthName $year ayına ait $monthlyFee TL aidat ödemeniz henüz alınmamıştır.",
-        "type": "payment_reminder",
-        "is_read": "FALSE",
-        "sent_at": DateTime.now().toIso8601String(),
-      };
-
-      final success = await GoogleSheetService.addNotification(notifData);
-      if (success) sentCount++;
-    }
-
-    setState(() => isSendingNotifications = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text("✅ $sentCount öğrenciye ödeme hatırlatması gönderildi"),
-        backgroundColor: Colors.green,
-      ),
-    );
-  }
-
-  void _applyFilters() {
-    setState(() {
-      filteredStudents = widget.students.where((student) {
-        if (searchQuery.isNotEmpty) {
-          final fullName = "${student.first_name} ${student.last_name}"
-              .toLowerCase();
-          if (!fullName.contains(searchQuery.toLowerCase())) return false;
-        }
-
-        if (selectedGroupFilter != "Tümü") {
-          final studentGroups = _getStudentGroups(student.app);
-          final groupId = widget.allGroups
-              .firstWhere(
-                (g) => g.name == selectedGroupFilter,
-                orElse: () => Group(
-                  groups_id: "",
-                  name: "",
-                  branches_id: '',
-                  coach_id: '',
-                  sports_id: '',
-                  schedule: '',
-                  capacity: '',
-                  monthly_fee: '',
-                  is_active: '',
-                ),
-              )
-              .groups_id;
-          if (!studentGroups.contains(groupId)) return false;
-        }
-
-        final status = _getPaymentStatus(student.app, selectedMonthFilter);
-
-        if (selectedPaymentFilter != "Tümü") {
-          if (selectedPaymentFilter == "Ödeyenler" && status != "paid")
-            return false;
-          if (selectedPaymentFilter == "Kısmi Ödeyenler" && status != "partial")
-            return false;
-          if (selectedPaymentFilter == "Ödemeyenler" && status != "unpaid")
-            return false;
-        }
-
-        return true;
-      }).toList();
-    });
-  }
-
-  void _showPaymentHistory(Users student) {
-    final history =
-        widget.allPayments.where((p) => p.student_id == student.app).toList()
-          ..sort((a, b) => b.paid_date.compareTo(a.paid_date));
-
-    showModalBottomSheet(
+    // Onay dialog'u
+    final confirmed = await showDialog<bool>(
       context: context,
-      isScrollControlled: true,
-      builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.6,
-        maxChildSize: 0.9,
-        minChildSize: 0.4,
-        expand: false,
-        builder: (context, scrollController) {
-          return Column(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: const BoxDecoration(
-                  border: Border(bottom: BorderSide(color: Colors.grey)),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      "${student.first_name} ${student.last_name} - Ödeme Geçmişi",
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () => Navigator.pop(ctx),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: history.isEmpty
-                    ? const Center(child: Text("Henüz ödeme kaydı yok"))
-                    : ListView.builder(
-                        controller: scrollController,
-                        itemCount: history.length,
-                        itemBuilder: (context, index) {
-                          final payment = history[index];
-                          return ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: Colors.teal.shade100,
-                              child: Icon(Icons.receipt, color: Colors.teal),
-                            ),
-                            title: Text("${payment.amount} TL"),
-                            subtitle: Text(
-                              "${payment.payment_method} - ${_formatDate(payment.paid_date)}",
-                            ),
-                            onTap: () => _showPaymentDetail(payment),
-                          );
-                        },
-                      ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  void _showPaymentDetail(Payment payment) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Ödeme Detayı"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
           children: [
-            Text(
-              "Tutar: ${payment.amount} TL",
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            Text("Yöntem: ${payment.payment_method}"),
-            Text("Tarih: ${_formatDate(payment.paid_date)}"),
-            if (payment.note.isNotEmpty) Text("Not: ${payment.note}"),
+            Icon(Icons.notifications_active, color: _accent),
+            SizedBox(width: 8),
+            Text("Toplu Hatırlatma", style: TextStyle(fontSize: 15)),
           ],
+        ),
+        content: Text(
+          "$groupLabel grubundaki ${students.length} öğrenciye hatırlatma gönderilecek. Devam?",
+          style: const TextStyle(fontSize: 13),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text("Kapat"),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("İptal"),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: _accent),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text("Gönder", style: TextStyle(color: Colors.white)),
           ),
         ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    int sent = 0;
+    final monthName = _getMonthNameTurkish(_selectedDate.month);
+    final year = _selectedDate.year;
+
+    for (var s in students) {
+      final fee = _getCachedFee(s.app);
+      final message =
+          "Sayın ${s.first_name} ${s.last_name}, $monthName $year ayına ait ${fee.toStringAsFixed(0)} TL ödemeniz alınmamıştır.";
+
+      final success = await GoogleSheetService.addNotification({
+        "notifications_id":
+            "NTF-${DateTime.now().millisecondsSinceEpoch}-${s.app}",
+        "sender_id": "Admin",
+        "recipient_id": s.app,
+        "groups_id": "",
+        "title": "💰 Ödeme Hatırlatma",
+        "message": message,
+        "type": "payment_reminder",
+        "is_read": "FALSE",
+        "sent_at": DateTime.now().toIso8601String(),
+      });
+      if (success) sent++;
+      await Future.delayed(const Duration(milliseconds: 150));
+    }
+
+    // FIX: Doğru kişi sayısını göster — students.length (unpaid listesi)
+    _showSnack(
+      "✅ $sent / ${students.length} öğrenciye hatırlatma gönderildi",
+      sent == students.length ? _success : _warning,
+    );
+  }
+
+  void _showSnack(String msg, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          msg,
+          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+        ),
+        backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.all(12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        duration: const Duration(seconds: 3),
       ),
     );
   }
 
   String _formatDate(String dateStr) {
-    if (dateStr.isEmpty) return "Belirsiz";
-    try {
-      final date = DateTime.parse(dateStr);
-      return DateFormat('dd/MM/yyyy').format(date);
-    } catch (e) {
-      return dateStr;
-    }
+    final parsed = _parseDateString(dateStr);
+    return parsed != null
+        ? DateFormat('dd/MM/yyyy', 'tr_TR').format(parsed)
+        : "—";
   }
 
-  @override
-  Widget build(BuildContext context) {
-    // Ay ismini al
-    final monthParts = selectedMonthFilter.split('-');
-    final currentMonthName = _getMonthName(int.parse(monthParts[1]));
-    final currentYear = monthParts[0];
+  // =========================================================================
+  // KART TASARIMI — taşmalar giderildi
+  // =========================================================================
+  Widget _buildStudentCard(Users s) {
+    final fee = _getCachedFee(s.app);
+    final groupName = _getStudentGroup(s.app);
+    final regDate = _parseDateString(s.created_at);
+    final dayLabel = regDate != null
+        ? (regDate.day <= 14 ? "1-14" : "15-31")
+        : "";
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF1F5F9),
-      appBar: AppBar(
-        title: const Text(
-          "Öğrenci Listesi",
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        backgroundColor: Colors.teal,
-        elevation: 0,
-        actions: [
-          if (_unpaidCount > 0)
-            IconButton(
-              icon: const Icon(Icons.notifications_active, color: Colors.white),
-              onPressed: _sendNotificationsToUnpaidStudents,
-              tooltip: "Ödemeyenlere bildirim gönder",
-            ),
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: _surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _border),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: Colors.teal))
-          : Column(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  color: Colors.white,
-                  child: Column(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            // Avatar
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: _danger.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Center(
+                child: Text(
+                  s.first_name.isNotEmpty ? s.first_name[0].toUpperCase() : "?",
+                  style: const TextStyle(
+                    color: _danger,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+
+            // Ad + Grup + Tarih — FIX: Expanded ile taşma önlendi
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // İsim satırı
+                  Row(
                     children: [
-                      // Arama çubuğu
-                      TextField(
-                        decoration: InputDecoration(
-                          labelText: "İsim veya soyisim ile ara...",
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
+                      Expanded(
+                        child: Text(
+                          "${s.first_name} ${s.last_name}",
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                            color: _textPrimary,
                           ),
-                          prefixIcon: const Icon(Icons.search),
-                          suffixIcon: searchQuery.isNotEmpty
-                              ? IconButton(
-                                  icon: const Icon(Icons.clear),
-                                  onPressed: () {
-                                    setState(() {
-                                      searchQuery = "";
-                                      _applyFilters();
-                                    });
-                                  },
-                                )
-                              : null,
-                        ),
-                        onChanged: (value) {
-                          setState(() {
-                            searchQuery = value;
-                            _applyFilters();
-                          });
-                        },
-                      ),
-                      const SizedBox(height: 12),
-
-                      // Grup filtresi
-                      DropdownButtonFormField<String>(
-                        value: selectedGroupFilter,
-                        decoration: const InputDecoration(
-                          labelText: "Grup",
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.group),
-                        ),
-                        items: groupNames
-                            .map(
-                              (g) => DropdownMenuItem(value: g, child: Text(g)),
-                            )
-                            .toList(),
-                        onChanged: (val) {
-                          setState(() {
-                            selectedGroupFilter = val!;
-                            _applyFilters();
-                            _updateCounts();
-                          });
-                        },
-                      ),
-                      const SizedBox(height: 12),
-
-                      // Ay filtresi
-                      DropdownButtonFormField<String>(
-                        value: selectedMonthFilter,
-                        decoration: const InputDecoration(
-                          labelText: "Ay",
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.calendar_month),
-                        ),
-                        items: monthOptions.map((m) {
-                          final parts = m.split('-');
-                          final monthName = _getMonthName(int.parse(parts[1]));
-                          return DropdownMenuItem(
-                            value: m,
-                            child: Text("$monthName ${parts[0]}"),
-                          );
-                        }).toList(),
-                        onChanged: (val) {
-                          setState(() {
-                            selectedMonthFilter = val!;
-                            _applyFilters();
-                            _updateCounts();
-                          });
-                        },
-                      ),
-                      const SizedBox(height: 16),
-
-                      // 🔥 YENİ: GELİŞMİŞ FİLTRE BUTONLARI
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade50,
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.all(6),
-                                  decoration: BoxDecoration(
-                                    color: Colors.teal.shade100,
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: Icon(
-                                    Icons.pie_chart,
-                                    size: 18,
-                                    color: Colors.teal.shade700,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  "$currentMonthName $currentYear Ödeme Durumu",
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.grey.shade700,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            Row(
-                              children: [
-                                _buildStatCard(
-                                  icon: Icons.check_circle,
-                                  label: "Ödeyenler",
-                                  count: _paidCount,
-                                  color: Colors.green,
-                                  filterValue: "Ödeyenler",
-                                ),
-                                const SizedBox(width: 8),
-                                _buildStatCard(
-                                  icon: Icons.remove_circle,
-                                  label: "Kısmi Ödeyenler",
-                                  count: _partialCount,
-                                  color: Colors.blue,
-                                  filterValue: "Kısmi Ödeyenler",
-                                ),
-                                const SizedBox(width: 8),
-                                _buildStatCard(
-                                  icon: Icons.cancel,
-                                  label: "Ödemeyenler",
-                                  count: _unpaidCount,
-                                  color: Colors.red,
-                                  filterValue: "Ödemeyenler",
-                                ),
-                              ],
-                            ),
-                          ],
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
-
-                      if (_unpaidCount > 0) ...[
-                        const SizedBox(height: 12),
+                      if (dayLabel.isNotEmpty)
                         Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.red.shade50,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.red.shade200),
+                          margin: const EdgeInsets.only(left: 4),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 5,
+                            vertical: 2,
                           ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.warning_amber,
-                                color: Colors.red.shade700,
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Text(
-                                  "$_unpaidCount öğrenci bu ay ödeme yapmamış. Bildirim göndermek için sağ üstteki butonu kullanın.",
-                                  style: TextStyle(
-                                    color: Colors.red.shade700,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ),
-                            ],
+                          decoration: BoxDecoration(
+                            color: _danger.withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: _danger.withOpacity(0.2)),
+                          ),
+                          child: Text(
+                            dayLabel,
+                            style: const TextStyle(
+                              color: _danger,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
-                      ],
                     ],
                   ),
-                ),
-                const SizedBox(height: 12),
-                if (isSendingNotifications) const LinearProgressIndicator(),
-                Expanded(
-                  child: filteredStudents.isEmpty
-                      ? const Center(child: Text("Öğrenci bulunamadı"))
-                      : ListView.builder(
-                          padding: const EdgeInsets.all(12),
-                          itemCount: filteredStudents.length,
-                          itemBuilder: (context, index) {
-                            final student = filteredStudents[index];
-                            final status = _getPaymentStatus(
-                              student.app,
-                              selectedMonthFilter,
-                            );
-                            final color = _getPaymentColor(status);
-                            final monthlyFee = _getStudentMonthlyFee(
-                              student.app,
-                            );
-                            final paidAmount = _getStudentTotalPaid(
-                              student.app,
-                              selectedMonthFilter,
-                            );
-                            final remainingDebt = monthlyFee - paidAmount;
-                            final groupName = _getStudentGroupName(student.app);
+                  const SizedBox(height: 4),
 
-                            return Card(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                side: BorderSide(color: color, width: 2),
-                              ),
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(12),
-                                onTap: () async {
-                                  await Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) =>
-                                          PaymentScreen(student: student),
-                                    ),
-                                  );
-                                  _updateCounts();
-                                  _applyFilters();
-                                },
-                                onLongPress: () => _showPaymentHistory(student),
-                                child: Container(
-                                  padding: const EdgeInsets.all(16),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          CircleAvatar(
-                                            backgroundColor: color.withOpacity(
-                                              0.2,
-                                            ),
-                                            child: Text(
-                                              student.first_name.isNotEmpty
-                                                  ? student.first_name[0]
-                                                        .toUpperCase()
-                                                  : "?",
-                                              style: TextStyle(
-                                                color: color,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  "${student.first_name} ${student.last_name}",
-                                                  style: const TextStyle(
-                                                    fontSize: 16,
-                                                    fontWeight: FontWeight.bold,
-                                                  ),
-                                                ),
-                                                Text(
-                                                  student.email,
-                                                  style: TextStyle(
-                                                    color: Colors.grey[600],
-                                                    fontSize: 12,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 8,
-                                              vertical: 4,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: color.withOpacity(0.2),
-                                              borderRadius:
-                                                  BorderRadius.circular(12),
-                                            ),
-                                            child: Text(
-                                              _getPaymentText(status),
-                                              style: TextStyle(
-                                                color: color,
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 12),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 4,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: Colors.grey.shade100,
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                        ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(
-                                              Icons.group,
-                                              size: 14,
-                                              color: Colors.grey[600],
-                                            ),
-                                            const SizedBox(width: 4),
-                                            Text(
-                                              groupName,
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.grey[600],
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      const SizedBox(height: 12),
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: _buildInfoChip(
-                                              Icons.money,
-                                              "Aylık: ${monthlyFee.toStringAsFixed(0)} TL",
-                                              Colors.grey.shade100,
-                                              Colors.grey.shade700,
-                                            ),
-                                          ),
-                                          Expanded(
-                                            child: _buildInfoChip(
-                                              Icons.payment,
-                                              "Ödenen: ${paidAmount.toStringAsFixed(0)} TL",
-                                              color.withOpacity(0.1),
-                                              color,
-                                            ),
-                                          ),
-                                          if (remainingDebt > 0 &&
-                                              status != "paid")
-                                            Expanded(
-                                              child: _buildInfoChip(
-                                                Icons.warning,
-                                                "Kalan: ${remainingDebt.toStringAsFixed(0)} TL",
-                                                Colors.orange.shade50,
-                                                Colors.orange.shade700,
-                                              ),
-                                            ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 8),
-                                      if (monthlyFee > 0)
-                                        LinearProgressIndicator(
-                                          value: (paidAmount / monthlyFee)
-                                              .clamp(0.0, 1.0),
-                                          backgroundColor: Colors.grey.shade200,
-                                          color: color,
-                                          borderRadius: BorderRadius.circular(
-                                            4,
-                                          ),
-                                          minHeight: 6,
-                                        ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        "Uzun basarak ödeme geçmişini görüntüleyin",
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          color: Colors.grey[500],
-                                        ),
-                                        textAlign: TextAlign.center,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
+                  // Grup adı — FIX: Flexible ile uzun grup adı taşmaz
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.group_outlined,
+                        size: 10,
+                        color: _textSecondary,
+                      ),
+                      const SizedBox(width: 3),
+                      Flexible(
+                        child: Text(
+                          groupName,
+                          style: const TextStyle(
+                            color: _textSecondary,
+                            fontSize: 10,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                ),
-              ],
-            ),
-    );
-  }
-
-  // 🔥 YENİ: İSTATİSTİK KARTI (Filtre butonu)
-  Widget _buildStatCard({
-    required IconData icon,
-    required String label,
-    required int count,
-    required Color color,
-    required String filterValue,
-  }) {
-    final isSelected = selectedPaymentFilter == filterValue;
-
-    return Expanded(
-      child: GestureDetector(
-        onTap: () {
-          setState(() {
-            selectedPaymentFilter = isSelected ? "Tümü" : filterValue;
-            _applyFilters();
-          });
-        },
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-          decoration: BoxDecoration(
-            color: isSelected ? color.withOpacity(0.15) : Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: isSelected ? color : Colors.grey.shade300,
-              width: isSelected ? 2 : 1,
-            ),
-            boxShadow: [
-              if (isSelected)
-                BoxShadow(
-                  color: color.withOpacity(0.3),
-                  blurRadius: 4,
-                  offset: const Offset(0, 2),
-                ),
-            ],
-          ),
-          child: Column(
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    icon,
-                    size: 20,
-                    color: isSelected ? color : Colors.grey.shade500,
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 6),
-                  Text(
-                    count.toString(),
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: isSelected ? color : Colors.grey.shade700,
-                    ),
+                  const SizedBox(height: 2),
+
+                  // Kayıt tarihi
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.calendar_today_outlined,
+                        size: 10,
+                        color: _textSecondary,
+                      ),
+                      const SizedBox(width: 3),
+                      Text(
+                        _formatDate(s.created_at),
+                        style: const TextStyle(
+                          color: _textSecondary,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
-              const SizedBox(height: 4),
+            ),
+            const SizedBox(width: 8),
+
+            // Aidat + Hatırlat — FIX: Column ile dikey hizala, taşma yok
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _danger.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    "${fee.toStringAsFixed(0)} ₺",
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                      color: _danger,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                GestureDetector(
+                  onTap: () => _sendReminder(s),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _accent,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.notifications_active_rounded,
+                          size: 11,
+                          color: Colors.white,
+                        ),
+                        SizedBox(width: 3),
+                        Text(
+                          "Hatırlat",
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // =========================================================================
+  // LİSTE WIDGET
+  // =========================================================================
+  Widget _buildList(List<Users> students, String title, Color titleColor) {
+    if (students.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 48),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _searchQuery.isNotEmpty
+                  ? Icon(
+                      Icons.search_off_rounded,
+                      size: 48,
+                      color: _textSecondary,
+                    )
+                  : const Icon(
+                      Icons.check_circle_outline_rounded,
+                      size: 56,
+                      color: _success,
+                    ),
+              const SizedBox(height: 12),
               Text(
-                label,
+                _searchQuery.isNotEmpty
+                    ? "\"$_searchQuery\" için sonuç yok"
+                    : "Bu grupta ödemeyen öğrenci yok! 🎉",
                 style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                  color: isSelected ? color : Colors.grey.shade500,
+                  color: _searchQuery.isNotEmpty ? _textSecondary : _success,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
                 ),
                 textAlign: TextAlign.center,
               ),
             ],
           ),
         ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Başlık + Tümüne Gönder
+        Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: titleColor.withOpacity(0.06),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: titleColor.withOpacity(0.15)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: titleColor,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  "${students.length} kişi",
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    color: titleColor,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              // FIX: Tümüne gönder — doğru kişi sayısıyla
+              GestureDetector(
+                onTap: () => _sendReminderToAll(students, title),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _accent.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: _accent.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.notifications_active_rounded,
+                        size: 11,
+                        color: _accent,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        "Tümüne (${students.length})",
+                        style: const TextStyle(
+                          color: _accent,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        ListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: students.length,
+          itemBuilder: (_, i) => _buildStudentCard(students[i]),
+        ),
+      ],
+    );
+  }
+
+  // =========================================================================
+  // BUILD
+  // =========================================================================
+  @override
+  Widget build(BuildContext context) {
+    final monthName = _getMonthShort(_selectedDate.month);
+    final year = _selectedDate.year;
+
+    // FIX: Gerçek unpaid sayıları (filtrelenmiş değil, toplam)
+    final totalUnpaid = firstHalfStudents.length + secondHalfStudents.length;
+    final filteredTotal =
+        filteredFirstHalfStudents.length + filteredSecondHalfStudents.length;
+
+    return Scaffold(
+      backgroundColor: _bg,
+      appBar: AppBar(
+        backgroundColor: _surface,
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        leading: IconButton(
+          icon: const Icon(
+            Icons.arrow_back_rounded,
+            color: _textPrimary,
+            size: 22,
+          ),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        title: const Text(
+          "Ödeme Hatırlatma",
+          style: TextStyle(
+            color: _textPrimary,
+            fontWeight: FontWeight.bold,
+            fontSize: 16,
+          ),
+        ),
+        actions: [
+          // Ay seçici
+          GestureDetector(
+            onTap: _selectMonth,
+            child: Container(
+              margin: const EdgeInsets.only(right: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: _accent.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: _accent.withOpacity(0.2)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.calendar_month_rounded,
+                    size: 13,
+                    color: _accent,
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    "$monthName $year",
+                    style: const TextStyle(
+                      color: _accent,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(width: 2),
+                  const Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    size: 14,
+                    color: _accent,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(96),
+          child: Column(
+            children: [
+              // Arama
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+                child: Container(
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF1F5F9),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: _border),
+                  ),
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      hintText: "İsim veya grup ara...",
+                      hintStyle: const TextStyle(
+                        color: _textSecondary,
+                        fontSize: 12,
+                      ),
+                      prefixIcon: const Icon(
+                        Icons.search_rounded,
+                        color: _accent,
+                        size: 16,
+                      ),
+                      suffixIcon: _searchQuery.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(
+                                Icons.clear_rounded,
+                                color: _textSecondary,
+                                size: 14,
+                              ),
+                              onPressed: () {
+                                _searchController.clear();
+                                setState(() {
+                                  _searchQuery = "";
+                                  _applyFilter();
+                                });
+                              },
+                            )
+                          : null,
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 9,
+                      ),
+                    ),
+                    style: const TextStyle(color: _textPrimary, fontSize: 12),
+                  ),
+                ),
+              ),
+
+              // Özet bant
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+                child: Row(
+                  children: [
+                    // FIX: Toplam ödemeyen (gerçek sayı)
+                    _statChip(
+                      Icons.warning_amber_rounded,
+                      "Ödemeyen: $totalUnpaid",
+                      _danger,
+                    ),
+                    const SizedBox(width: 6),
+                    if (_searchQuery.isNotEmpty)
+                      _statChip(
+                        Icons.filter_list_rounded,
+                        "Filtre: $filteredTotal",
+                        _accent,
+                      ),
+                  ],
+                ),
+              ),
+
+              // Tab bar
+              TabBar(
+                controller: _tabController,
+                indicatorColor: _accent,
+                indicatorWeight: 2,
+                labelColor: _accent,
+                unselectedLabelColor: _textSecondary,
+                labelStyle: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+                unselectedLabelStyle: const TextStyle(fontSize: 11),
+                tabs: [
+                  Tab(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.looks_one_outlined, size: 14),
+                        const SizedBox(width: 4),
+                        const Text("1-14 Gün"),
+                        const SizedBox(width: 4),
+                        _tabBadge(
+                          _searchQuery.isNotEmpty
+                              ? filteredFirstHalfStudents.length
+                              : firstHalfStudents.length,
+                          _accent,
+                        ),
+                      ],
+                    ),
+                  ),
+                  Tab(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.looks_two_outlined, size: 14),
+                        const SizedBox(width: 4),
+                        const Text("15-31 Gün"),
+                        const SizedBox(width: 4),
+                        _tabBadge(
+                          _searchQuery.isNotEmpty
+                              ? filteredSecondHalfStudents.length
+                              : secondHalfStudents.length,
+                          _warning,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator(color: _accent))
+          : TabBarView(
+              controller: _tabController,
+              children: [
+                SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+                  child: _buildList(
+                    filteredFirstHalfStudents,
+                    "1-14 Kayıt Grubu",
+                    _accent,
+                  ),
+                ),
+                SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+                  child: _buildList(
+                    filteredSecondHalfStudents,
+                    "15-31 Kayıt Grubu",
+                    _warning,
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+
+  Widget _statChip(IconData icon, String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 11, color: color),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildInfoChip(
-    IconData icon,
-    String label,
-    Color bgColor,
-    Color textColor,
-  ) {
+  Widget _tabBadge(int count, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
       decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(8),
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(10),
       ),
-      child: Row(
-        children: [
-          Icon(icon, size: 14, color: textColor),
-          const SizedBox(width: 4),
-          Expanded(
-            child: Text(
-              label,
-              style: TextStyle(fontSize: 11, color: textColor),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ],
+      child: Text(
+        "$count",
+        style: TextStyle(
+          fontSize: 9,
+          fontWeight: FontWeight.bold,
+          color: color,
+        ),
       ),
     );
   }
