@@ -1939,7 +1939,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   Widget _buildMenuGrid() {
-    final List<Map<String, dynamic>> commonMenus = [
+    final List<Map<String, dynamic>> allMenus = [
       {
         "title": "Öğrenci & Ödeme",
         "icon": Icons.search,
@@ -1989,20 +1989,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
         "route": "group",
       },
     ];
-
-    final List<Map<String, dynamic>> adminMenus = [
-      {
-        "title": "Grup Yönetimi",
-        "icon": Icons.groups,
-        "color": Colors.blue,
-        "route": "group",
-      },
-    ];
-
-    final allMenus = List<Map<String, dynamic>>.from(commonMenus);
-    if (widget.currentUserRole == 'admin') {
-      allMenus.insertAll(5, adminMenus);
-    }
 
     return GridView.count(
       shrinkWrap: true,
