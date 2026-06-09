@@ -1,6 +1,7 @@
 // AccountantInterface.dart - DÜZELTİLMİŞ VERSİYON
 
 import 'package:EVOM_SPOR/managerpage/antremanprogram.dart';
+import 'package:EVOM_SPOR/managerpage/student_P&A.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:EVOM_SPOR/managerpage/payment_history.dart';
@@ -43,23 +44,27 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
     _dashboardData = _loadAllDataParallel();
   }
 
-  // PARALEL VERİ ÇEKME
+  // 🚀 PARALEL VERİ ÇEKME - DÜZELTİLMİŞ VERSİYON
   Future<Map<String, dynamic>> _loadAllDataParallel() async {
     final stopwatch = Stopwatch()..start();
 
     try {
+      // TÜM VERİLERİ PARALEL OLARAK ÇEK
       final results = await Future.wait([
-        GoogleSheetService.getStudents(),
-        GoogleSheetService.getCoachesOnlyCached(),
-        GoogleSheetService.getGroupsCached(),
-        GoogleSheetService.getUsersCached(),
-        GoogleSheetService.getPaymentsCached(),
-        GoogleSheetService.getGroupStudentsCached(),
-        GoogleSheetService.getNotifications(userId: "all"),
+        GoogleSheetService.getStudents(), // 0: List<Users>
+        GoogleSheetService.getCoachesOnlyCached(), // 1: List<Users> (coach rolü olanlar)
+        GoogleSheetService.getGroupsCached(), // 2: List<Group>
+        GoogleSheetService.getUsersCached(), // 3: List<Users>
+        GoogleSheetService.getPaymentsCached(), // 4: List<Payment>
+        GoogleSheetService.getGroupStudentsCached(), // 5: List<GroupStudent>
+        GoogleSheetService.getNotifications(
+          userId: "all",
+        ), // 6: List<Notifications>
       ]);
 
       final students = results[0] as List<Users>;
-      final coaches = results[1] as List<Coach>;
+      final coachesUsers =
+          results[1] as List<Users>; // Coach rolü olan Users listesi
       final groups = results[2] as List<Group>;
       final allUsers = results[3] as List<Users>;
       final payments = results[4] as List<Payment>;
@@ -71,14 +76,20 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
         "⏱️ Tüm veriler PARALEL olarak ${stopwatch.elapsedMilliseconds}ms'de yüklendi",
       );
 
+      // Antrenman programı için verileri sakla
       _allGroups = groups;
       _allRelations = relations;
       _allStudents = students;
 
+      // Toplam koç sayısı (Users listesinden)
+      final totalCoaches = coachesUsers.length;
+
+      // Toplam öğrenci sayısı
       final totalStudents = students
           .where((s) => s.role.toLowerCase() == "student")
           .length;
 
+      // Aylık gelir hesaplama
       final now = DateTime.now();
       final currentMonth =
           "${now.year}-${now.month.toString().padLeft(2, '0')}";
@@ -90,6 +101,7 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
         }
       }
 
+      // Son 7 gün duyurular
       final sevenDaysAgo = now.subtract(const Duration(days: 7));
       final recent = allNotifications.where((n) {
         try {
@@ -101,6 +113,7 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
       }).toList();
       recent.sort((a, b) => b.sent_at.compareTo(a.sent_at));
 
+      // Doğum günleri
       final birthdays = <Users>[];
       for (var user in allUsers) {
         if (user.role.toLowerCase() == "student" && user.b_date.isNotEmpty) {
@@ -147,14 +160,15 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
 
       return {
         'totalStudents': totalStudents,
-        'totalCoaches': coaches.length,
+        'totalCoaches': totalCoaches,
         'totalGroups': groups.length,
         'monthlyIncome': income,
         'recentNotifications': recent,
         'upcomingBirthdays': birthdays,
       };
-    } catch (e) {
+    } catch (e, stackTrace) {
       print("❌ Veri yükleme hatası: $e");
+      print(stackTrace);
       return {
         'totalStudents': 0,
         'totalCoaches': 0,
@@ -187,6 +201,7 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
     return "$days gün sonra";
   }
 
+  // Bugün antrenmanı olan öğrencileri getir
   List<Users> _getTodaysStudents() {
     final todayName = _getTodayName();
     final todayGroups = <String>[];
@@ -223,6 +238,7 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
     return days[now.weekday - 1];
   }
 
+  // Bugün Antrenmanı Olanlar Kartı
   Widget _buildTodayTrainingCard() {
     final todaysStudents = _getTodaysStudents();
 
@@ -457,7 +473,7 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
             ),
             const SizedBox(height: 30),
             const Text(
-              " EVOM SPOR - Muhasebeci Girişi",
+              " EVOM SPOR - Yönetici Girişi",
               style: TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
@@ -842,7 +858,6 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
     );
   }
 
-  // 🔥 MENU GRID - Admin kontrolü YOK, herkes aynısını görür
   Widget _buildMenuGrid() {
     final List<Map<String, dynamic>> allMenus = [
       {
@@ -882,16 +897,22 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
         "route": "register",
       },
       {
+        "title": "Raporlar",
+        "icon": Icons.bar_chart,
+        "color": Colors.indigo,
+        "route": "reports",
+      },
+      {
         "title": "Grup Yönetimi",
         "icon": Icons.groups,
         "color": Colors.blue,
         "route": "group",
       },
       {
-        "title": "Raporlar",
-        "icon": Icons.bar_chart,
-        "color": Colors.indigo,
-        "route": "reports",
+        "title": "Öğrenci Aktif/Pasif",
+        "icon": Icons.person_add_disabled,
+        "color": Colors.deepOrange,
+        "route": "pasifaktif",
       },
     ];
 
@@ -911,6 +932,101 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
         );
       }).toList(),
     );
+  }
+
+  Future<void> _navigateToRoute(String route) async {
+    switch (route) {
+      case "student_search":
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) =>
+                StudentSearchScreen(currentUser: widget.currentUser),
+          ),
+        );
+        break;
+      case "attendance":
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => TakeAttendanceScreen(
+              currentUser:
+                  widget.currentUser ??
+                  Users(
+                    app: "",
+                    branches_id: "",
+                    first_name: "accountant",
+                    last_name: "",
+                    email: "",
+                    phone: "",
+                    password_hash: "",
+                    role: "accountant",
+                    profile_photo_url: "",
+                    amount: "",
+                    b_date: "",
+                    created_at: "",
+                    last_login: "",
+                    is_active: "",
+                  ),
+            ),
+          ),
+        );
+        break;
+      case "notification":
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) =>
+                NotificationsScreen(currentUser: widget.currentUser),
+          ),
+        );
+        break;
+      case "payment_reminder":
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const PaymentReminderScreen()),
+        );
+        break;
+      case "training_schedule":
+        final allStudents = await GoogleSheetService.getStudentsOnlyCached();
+        final allGroups = await GoogleSheetService.getGroupsCached();
+        final allRelations = await GoogleSheetService.getGroupStudentsCached();
+        if (!context.mounted) return;
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => WeeklyTrainingScreen(
+              groups: allGroups,
+              relations: allRelations,
+              students: allStudents,
+            ),
+          ),
+        );
+        break;
+      case "group":
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => GroupManagementScreen()),
+        );
+        break;
+      case "register":
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const AdvancedSignUpPage()),
+        );
+        break;
+      case "reports":
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Raporlar özelliği yakında...")),
+        );
+        break;
+      case "pasifaktif":
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const StudentActivationScreen()),
+        );
+        break;
+    }
   }
 
   Widget _menuCard(
@@ -956,104 +1072,5 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
         ),
       ),
     );
-  }
-
-  Future<void> _navigateToRoute(String route) async {
-    switch (route) {
-      case "student_search":
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) =>
-                StudentSearchScreen(currentUser: widget.currentUser),
-          ),
-        );
-        break;
-      case "attendance":
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => TakeAttendanceScreen(
-              currentUser:
-                  widget.currentUser ??
-                  Users(
-                    app: "",
-                    branches_id: "",
-                    first_name: "Admin",
-                    last_name: "",
-                    email: "",
-                    phone: "",
-                    password_hash: "",
-                    role: "admin",
-                    profile_photo_url: "",
-                    amount: "",
-                    b_date: "",
-                    created_at: "",
-                    last_login: "",
-                    is_active: "",
-                  ),
-            ),
-          ),
-        );
-        break;
-      case "notification":
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) =>
-                NotificationsScreen(currentUser: widget.currentUser),
-          ),
-        );
-        break;
-      case "payment_reminder":
-        final allStudents = await GoogleSheetService.getStudentsOnlyCached();
-        final allPayments = await GoogleSheetService.getPaymentsCached();
-        if (!context.mounted) return;
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => PaymentReminderScreen(
-              students: allStudents,
-              allPayments: allPayments,
-              groups: [],
-              groupStudents: [],
-            ),
-          ),
-        );
-        break;
-      case "training_schedule":
-        final allStudents = await GoogleSheetService.getStudentsOnlyCached();
-        final allGroups = await GoogleSheetService.getGroupsCached();
-        final allRelations = await GoogleSheetService.getGroupStudentsCached();
-        if (!context.mounted) return;
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => WeeklyTrainingScreen(
-              groups: allGroups,
-              relations: allRelations,
-              students: allStudents,
-            ),
-          ),
-        );
-        break;
-      case "group":
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => GroupManagementScreen()),
-        );
-        break;
-      case "register":
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => AdvancedSignUpPage()),
-        );
-        break;
-      case "reports":
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Raporlar özelliği yakında...")),
-        );
-        break;
-    }
   }
 }
