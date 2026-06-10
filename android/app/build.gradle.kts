@@ -1,76 +1,29 @@
-/*
 plugins {
     id("com.android.application")
     id("kotlin-android")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+    id("com.google.gms.google-services")
 }
 
 android {
     namespace = "com.example.EVOM_SPOR"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17.toString()
-    }
-
-    defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.EVOM_SPOR"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
-        versionCode = flutter.versionCode
-        versionName = flutter.versionName
-    }
-
-    buildTypes {
-        release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
-        }
-    }
-}
-
-flutter {
-    source = "../.."
-}
-
-
-*/
-plugins {
-    id("com.android.application")
-    id("kotlin-android")
-    id("dev.flutter.flutter-gradle-plugin")
-}
-
-android {
-    namespace = "com.example.EVOM_SPOR"
-    compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
         isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_1_8.toString()
+        jvmTarget = "17"
     }
 
     defaultConfig {
         applicationId = "com.example.EVOM_SPOR"
-        minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        minSdk = flutter.minSdkVersion  
+        targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         multiDexEnabled = true
@@ -87,7 +40,43 @@ flutter {
     source = "../.."
 }
 
-// 🔥 SÜRÜMÜ 2.1.4'e YÜKSELT
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+    implementation(platform("com.google.firebase:firebase-bom:33.1.0"))
+    implementation("com.google.firebase:firebase-messaging")
+}
+
+// 🔥🔥🔥 APK ÇIKTI YOLUNU FLUTTER'IN BEKLEDİĞİ YERE YÖNLENDİR 🔥🔥🔥
+afterEvaluate {
+    tasks.named("assembleRelease").configure {
+        doLast {
+            val sourceApk = file("build/outputs/apk/release/app-release.apk")
+            val targetDir = file("../../build/app/outputs/flutter-apk")
+            val targetApk = file("../../build/app/outputs/flutter-apk/app-release.apk")
+            
+            if (sourceApk.exists()) {
+                targetDir.mkdirs()
+                sourceApk.copyTo(targetApk, overwrite = true)
+                println("✅ APK kopyalandı: ${targetApk.absolutePath}")
+            } else {
+                println("❌ Kaynak APK bulunamadı: ${sourceApk.absolutePath}")
+            }
+        }
+    }
+    
+    tasks.named("assembleDebug").configure {
+        doLast {
+            val sourceApk = file("build/outputs/apk/debug/app-debug.apk")
+            val targetDir = file("../../build/app/outputs/flutter-apk")
+            val targetApk = file("../../build/app/outputs/flutter-apk/app-debug.apk")
+            
+            if (sourceApk.exists()) {
+                targetDir.mkdirs()
+                sourceApk.copyTo(targetApk, overwrite = true)
+                println("✅ APK kopyalandı: ${targetApk.absolutePath}")
+            } else {
+                println("❌ Kaynak APK bulunamadı: ${sourceApk.absolutePath}")
+            }
+        }
+    }
 }

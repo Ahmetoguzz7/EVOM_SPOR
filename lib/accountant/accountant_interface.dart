@@ -52,7 +52,7 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
       // TÜM VERİLERİ PARALEL OLARAK ÇEK
       final results = await Future.wait([
         GoogleSheetService.getStudents(), // 0: List<Users>
-        GoogleSheetService.getCoachesOnlyCached(), // 1: List<Users> (coach rolü olanlar)
+        GoogleSheetService.getCoachesOnlyCached(), // 1: List<Users> ⬅️ Coach değil, Users!
         GoogleSheetService.getGroupsCached(), // 2: List<Group>
         GoogleSheetService.getUsersCached(), // 3: List<Users>
         GoogleSheetService.getPaymentsCached(), // 4: List<Payment>
@@ -63,8 +63,7 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
       ]);
 
       final students = results[0] as List<Users>;
-      final coachesUsers =
-          results[1] as List<Users>; // Coach rolü olan Users listesi
+      final coachesUsers = results[1] as List<Users>; // ✅ DÜZELTİLDİ
       final groups = results[2] as List<Group>;
       final allUsers = results[3] as List<Users>;
       final payments = results[4] as List<Payment>;

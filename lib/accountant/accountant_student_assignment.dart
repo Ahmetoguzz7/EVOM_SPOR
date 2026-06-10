@@ -43,9 +43,6 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
       final relations = results[1] as List<GroupStudent>;
 
       stopwatch.stop();
-      print(
-        "⏱️ StudentAssignmentScreen verileri PARALEL olarak ${stopwatch.elapsedMilliseconds}ms'de yüklendi",
-      );
 
       return {'students': students, 'relations': relations};
     } catch (e) {

@@ -3,6 +3,7 @@
     <!-- 🌐 İNTERNET VE AĞ İZİNLERİ -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" /> <!-- EKLENDİ -->
     
     <!-- 💾 DEPOLAMA VE DOSYA OKUMA (Güncelleme indirmek için) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
@@ -13,13 +14,26 @@
 
     <!-- 🔔 BİLDİRİM İZNİ (Android 13+ için gerekli) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    
+    <!-- ⏰ ARKA PLAN ÇALIŞMA İZİNLERİ (EKLENDİ) -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" /> <!-- Android 12+ -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" /> <!-- Android 14+ -->
+    
+    <!-- 📳 TİTREŞİM İZNİ (EKLENDI) -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.WAKE_LOCK" />
+<uses-permission android:name="android.permission.VIBRATE" />
+<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
 
     <application
         android:label="EVOM_SPOR"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher" 
         android:allowBackup="true"
-        android:fullBackupContent="true">
+        android:fullBackupContent="true"
+        android:requestLegacyExternalStorage="true"> <!-- EKLENDI - Android 10 için -->
         
         <!-- 📂 APK Kurulumu için FileProvider (Güncelleme sistemi için şart) -->
         <provider
@@ -55,12 +69,33 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+            
+        <!-- 🔔 WorkManager için (EKLENDI) -->
+        <service
+            android:name="com.workmanager.WorkManagerBackgroundService"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false" />
+            
+        <service
+            android:name="com.workmanager.WorkManagerForegroundService"
+            android:enabled="true"
+            android:exported="false" />
+            
+        <!-- Bildirim kanalı için (EKLENDI) -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="update_channel" />
     </application>
 
     <queries>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- APK indirme için tarayıcı (EKLENDI) -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
         </intent>
     </queries>
 </manifest>

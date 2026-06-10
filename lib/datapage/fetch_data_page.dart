@@ -1792,7 +1792,7 @@ class GoogleSheetService {
   // =========================================================================
   // ✅ FOTOĞRAF YÜKLEME
   // =========================================================================
-
+  /*
   static Future<String?> uploadImageToDrive(
     File imageFile,
     String fileName,
@@ -1826,6 +1826,76 @@ class GoogleSheetService {
           print("✅ Fotoğraf yüklendi: $fileName");
           print("   URL: ${decoded['data']['url']}");
           invalidateCache('users');
+          return decoded['data']['url'];
+        } else {
+          print("❌ API hatası: ${decoded['error']}");
+        }
+      }
+      return null;
+    } catch (e) {
+      print("❌ Fotoğraf yükleme hatası: $e");
+      return null;
+    }
+  }
+
+  static Future<String?> getImageUrlFromDrive(
+    String fileName,
+    String folderName,
+  ) async {
+    if (fileName.isEmpty) return null;
+
+    try {
+      final response = await _postRequest({
+        "action": "getImageUrl",
+        "file_name": fileName,
+        "folder": folderName,
+      });
+
+      if (response != null && response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        if (decoded['success'] == true) {
+          return decoded['data']['url'];
+        }
+      }
+      return null;
+    } catch (e) {
+      print("Resim URL alma hatası: $e");
+      return null;
+    }
+  }
+*/
+  static Future<String?> uploadImageToDrive(
+    File imageFile,
+    String fileName,
+    String folderName, {
+    String? targetUserId,
+    String? targetField,
+  }) async {
+    try {
+      print("📸 Yükleniyor: $fileName -> $folderName");
+
+      List<int> imageBytes = await imageFile.readAsBytes();
+      String base64Image = base64Encode(imageBytes);
+
+      final requestBody = {
+        "action": "uploadImage",
+        "file_name": fileName,
+        "file_data": base64Image,
+        "folder": folderName,
+      };
+
+      if (targetUserId != null && targetField != null) {
+        requestBody["targetUserId"] = targetUserId;
+        requestBody["targetField"] = targetField;
+      }
+
+      final response = await _postRequest(requestBody);
+
+      if (response != null && response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        if (decoded['success'] == true) {
+          print("✅ Fotoğraf yüklendi: $fileName");
+          print("   URL: ${decoded['data']['url']}");
           return decoded['data']['url'];
         } else {
           print("❌ API hatası: ${decoded['error']}");
