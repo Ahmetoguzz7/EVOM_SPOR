@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "695872279364",
+    "project_id": "evomspor",
+    "storage_bucket": "evomspor.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:695872279364:android:fdc401d8049a836f557d11",
+        "android_client_info": {
+          "package_name": "com.example.EVOM_SPOR"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAOTjU3pDddAONe8fpelIpliq2pacXU1cI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
