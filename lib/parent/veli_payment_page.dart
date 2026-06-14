@@ -94,7 +94,7 @@ class _VeliOdemeSayfasiState extends State<VeliOdemeSayfasi> {
 
       return {'payments': odemelerList, 'success': true};
     } catch (e) {
-      print("Ödeme çekme hatası: $e");
+      print("Veri çekme hatası: $e");
       return {'payments': <Payment>[], 'success': false, 'error': e.toString()};
     }
   }

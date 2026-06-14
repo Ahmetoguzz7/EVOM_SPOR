@@ -20,8 +20,9 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
   List<GroupStudent> allRelations = [];
   String searchQuery = "";
 
-  // 🔥 YENİ: İlk yükleme kontrolü
+  // 🔥 YENİ: Loading state'leri
   bool _isInitialLoad = true;
+  Set<String> _assigningStudents = {}; // Hangi öğrenci ekleniyor takip et
 
   @override
   void initState() {
@@ -54,17 +55,13 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
     }
   }
 
-  // 🔥 DÜZELTİLMİŞ: Filtreleme metodu (setState kontrolü ile)
   void _filterStudents(String query) {
-    // Eğer widget build edilirken çağrıldıysa, addPostFrameCallback ile ertele
     if (!mounted) return;
 
-    // 🔥 KRİTİK: Eğer şu anda build aşamasındaysak, setState'i ertele
     if (SchedulerBinding.instance.schedulerPhase ==
             SchedulerPhase.persistentCallbacks ||
         SchedulerBinding.instance.schedulerPhase ==
             SchedulerPhase.postFrameCallbacks) {
-      // Build aşamasındaysak, bir sonraki frame'de çalıştır
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           setState(() {
@@ -74,7 +71,6 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
         }
       });
     } else {
-      // Normal durumda direkt setState
       setState(() {
         searchQuery = query;
         _applyFilter();
@@ -82,7 +78,6 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
     }
   }
 
-  // 🔥 YENİ: Filtreleme mantığını ayrı metoda al
   void _applyFilter() {
     filteredStudents = allStudents.where((student) {
       final fullName = "${student.first_name} ${student.last_name}"
@@ -97,7 +92,6 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
     }).toList();
   }
 
-  // 🔥 YENİ: Veriler yüklendikten sonra filtrelemeyi başlat
   void _onDataLoaded() {
     if (!mounted) return;
     setState(() {
@@ -105,36 +99,43 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
     });
   }
 
+  // 🔥 YENİ: Loading göstererek ekleme yap
   Future<void> _assignStudent(Users student) async {
-    final newRelation = {
-      "groups_id": widget.group.groups_id,
-      "student_id": student.app,
-      "enrolled_at": DateTime.now().toIso8601String(),
-      "is_active": "TRUE",
-    };
+    // Eğer bu öğrenci zaten ekleniyorsa, tekrar tıklanmasın
+    if (_assigningStudents.contains(student.app)) return;
 
-    bool ok = await GoogleSheetService.insertData(
-      "group_students",
-      newRelation,
+    setState(() {
+      _assigningStudents.add(student.app);
+    });
+
+    bool ok = await GoogleSheetService.assignStudentToGroup(
+      student.app,
+      widget.group.groups_id,
     );
+
+    setState(() {
+      _assigningStudents.remove(student.app);
+    });
 
     if (ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("${student.first_name} ${student.last_name} eklendi!"),
+          content: Text(
+            "✅ ${student.first_name} ${student.last_name} eklendi!",
+          ),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 2),
         ),
       );
-      // 🔥 Verileri yeniden yükle
+      // Verileri yeniden yükle
       setState(() {
         _dataFuture = _loadDataParallel();
       });
     } else if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-            "Ekleme başarısız oldu!",
-            style: TextStyle(color: Colors.red),
-          ),
+          content: Text("❌ Ekleme başarısız oldu!"),
+          backgroundColor: Colors.red,
         ),
       );
     }
@@ -147,6 +148,7 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
       appBar: AppBar(
         title: Text("${widget.group.name} | Öğrenci Atama"),
         backgroundColor: Colors.indigo,
+        foregroundColor: Colors.white,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () {
@@ -158,7 +160,16 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
         future: _dataFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(color: Colors.indigo),
+                  SizedBox(height: 16),
+                  Text("Öğrenciler yükleniyor..."),
+                ],
+              ),
+            );
           }
 
           if (snapshot.hasError) {
@@ -187,7 +198,6 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
           allStudents = data['students'] ?? [];
           allRelations = data['relations'] ?? [];
 
-          // 🔥 DÜZELTİLMİŞ: İlk yüklemede filtrelemeyi bir sonraki frame'de yap
           if (_isInitialLoad) {
             _isInitialLoad = false;
             WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -197,6 +207,7 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
 
           return Column(
             children: [
+              // Arama çubuğu
               Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: TextField(
@@ -213,19 +224,85 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
                   ),
                 ),
               ),
-              // 🔥 Filtre butonları (şimdilik pasif, istersen aktifleştir)
-              SizedBox(
-                height: 50,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+
+              // İstatistik kartı (kaç öğrenci var)
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 16),
+                padding: const EdgeInsets.symmetric(
+                  vertical: 12,
+                  horizontal: 16,
+                ),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF1E293B), Color(0xFF0F172A)],
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    _actionChip("Tümü", Icons.all_inclusive, Colors.blue),
-                    _actionChip("Yeni Kayıtlar", Icons.fiber_new, Colors.green),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(
+                            Icons.people_outline,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              "Eklenebilecek Öğrenciler",
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.white70,
+                              ),
+                            ),
+                            Text(
+                              "${filteredStudents.length} öğrenci",
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    if (searchQuery.isNotEmpty)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          "Aranıyor: $searchQuery",
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Colors.white70,
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
-              const SizedBox(height: 10),
+
+              const SizedBox(height: 16),
+
+              // Öğrenci listesi
               Expanded(
                 child: filteredStudents.isEmpty
                     ? Center(
@@ -240,53 +317,236 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
                             const SizedBox(height: 16),
                             Text(
                               searchQuery.isEmpty
-                                  ? "Gruba eklenebilecek öğrenci bulunamadı."
+                                  ? "Gruba eklenebilecek öğrenci bulunamadı"
                                   : "Aranan kriterde öğrenci yok",
-                              style: TextStyle(color: Colors.grey.shade600),
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey.shade600,
+                              ),
                             ),
+                            const SizedBox(height: 8),
+                            if (searchQuery.isNotEmpty)
+                              TextButton.icon(
+                                onPressed: () => _filterStudents(""),
+                                icon: const Icon(Icons.clear, size: 16),
+                                label: const Text("Aramayı Temizle"),
+                              ),
                           ],
                         ),
                       )
                     : ListView.builder(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 80),
                         itemCount: filteredStudents.length,
                         itemBuilder: (context, index) {
                           final s = filteredStudents[index];
-                          return Card(
-                            margin: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 4,
+                          final isAssigning = _assigningStudents.contains(
+                            s.app,
+                          );
+
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: Colors.indigo.withOpacity(0.2),
+                                width: 1,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.04),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
                             ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            elevation: 2,
-                            child: ListTile(
-                              leading: CircleAvatar(
-                                backgroundColor: Colors.indigo.shade50,
-                                child: Text(
-                                  s.first_name.isNotEmpty
-                                      ? s.first_name[0].toUpperCase()
-                                      : "?",
-                                  style: const TextStyle(
-                                    color: Colors.indigo,
-                                    fontWeight: FontWeight.bold,
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(16),
+                                onTap: () => _showStudentDetailDialog(s),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Row(
+                                    children: [
+                                      // Profil fotoğrafı / Avatar
+                                      ClipRRect(
+                                        borderRadius: BorderRadius.circular(14),
+                                        child: Container(
+                                          width: 55,
+                                          height: 55,
+                                          decoration: BoxDecoration(
+                                            gradient: LinearGradient(
+                                              colors: [
+                                                Colors.indigo.shade300,
+                                                Colors.indigo.shade600,
+                                              ],
+                                            ),
+                                            borderRadius: BorderRadius.circular(
+                                              14,
+                                            ),
+                                          ),
+                                          child: s.profile_photo_url.isNotEmpty
+                                              ? Image.network(
+                                                  s.profile_photo_url,
+                                                  fit: BoxFit.cover,
+                                                  errorBuilder:
+                                                      (
+                                                        context,
+                                                        error,
+                                                        stackTrace,
+                                                      ) {
+                                                        return Center(
+                                                          child: Text(
+                                                            s
+                                                                    .first_name
+                                                                    .isNotEmpty
+                                                                ? s.first_name[0]
+                                                                      .toUpperCase()
+                                                                : "?",
+                                                            style:
+                                                                const TextStyle(
+                                                                  fontSize: 24,
+                                                                  fontWeight:
+                                                                      FontWeight
+                                                                          .bold,
+                                                                  color: Colors
+                                                                      .white,
+                                                                ),
+                                                          ),
+                                                        );
+                                                      },
+                                                )
+                                              : Center(
+                                                  child: Text(
+                                                    s.first_name.isNotEmpty
+                                                        ? s.first_name[0]
+                                                              .toUpperCase()
+                                                        : "?",
+                                                    style: const TextStyle(
+                                                      fontSize: 24,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      color: Colors.white,
+                                                    ),
+                                                  ),
+                                                ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 14),
+
+                                      // Öğrenci bilgileri
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              "${s.first_name} ${s.last_name}",
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w700,
+                                                fontSize: 15,
+                                                color: Color(0xFF0F172A),
+                                              ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Row(
+                                              children: [
+                                                Icon(
+                                                  Icons.phone_outlined,
+                                                  size: 12,
+                                                  color: Colors.green.shade500,
+                                                ),
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  s.phone.isNotEmpty
+                                                      ? s.phone
+                                                      : "Telefon yok",
+                                                  style: TextStyle(
+                                                    fontSize: 12,
+                                                    color: s.phone.isNotEmpty
+                                                        ? Colors.grey.shade700
+                                                        : Colors.grey.shade400,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Row(
+                                              children: [
+                                                Icon(
+                                                  Icons.email_outlined,
+                                                  size: 12,
+                                                  color: Colors.grey.shade500,
+                                                ),
+                                                const SizedBox(width: 4),
+                                                Expanded(
+                                                  child: Text(
+                                                    s.email.isNotEmpty
+                                                        ? s.email
+                                                        : "E-posta yok",
+                                                    style: TextStyle(
+                                                      fontSize: 11,
+                                                      color:
+                                                          Colors.grey.shade500,
+                                                    ),
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+
+                                      // 🔥 EKLE BUTONU - Loading gösteriyor!
+                                      if (isAssigning)
+                                        Container(
+                                          width: 44,
+                                          height: 44,
+                                          decoration: BoxDecoration(
+                                            color: Colors.indigo.shade50,
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ),
+                                          ),
+                                          child: const Center(
+                                            child: SizedBox(
+                                              width: 22,
+                                              height: 22,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color: Colors.indigo,
+                                              ),
+                                            ),
+                                          ),
+                                        )
+                                      else
+                                        GestureDetector(
+                                          onTap: () => _assignStudent(s),
+                                          child: Container(
+                                            width: 44,
+                                            height: 44,
+                                            decoration: BoxDecoration(
+                                              color: Colors.green.shade50,
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                              border: Border.all(
+                                                color: Colors.green.shade200,
+                                              ),
+                                            ),
+                                            child: const Icon(
+                                              Icons.person_add_alt_rounded,
+                                              color: Colors.green,
+                                              size: 24,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
                                   ),
                                 ),
-                              ),
-                              title: Text(
-                                "${s.first_name} ${s.last_name}",
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              subtitle: Text(s.phone),
-                              trailing: IconButton(
-                                icon: const Icon(
-                                  Icons.add_circle,
-                                  color: Colors.green,
-                                  size: 32,
-                                ),
-                                onPressed: () => _assignStudent(s),
                               ),
                             ),
                           );
@@ -300,6 +560,205 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
     );
   }
 
+  // 🔥 YENİ: Öğrenci detay dialog'u
+  void _showStudentDetailDialog(Users student) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      backgroundColor: Colors.white,
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.7,
+        minChildSize: 0.5,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (context, scrollController) => Container(
+          padding: const EdgeInsets.all(20),
+          child: SingleChildScrollView(
+            controller: scrollController,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 50,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Center(
+                  child: Container(
+                    width: 100,
+                    height: 100,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          Colors.indigo.shade300,
+                          Colors.indigo.shade600,
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(25),
+                    ),
+                    child: student.profile_photo_url.isNotEmpty
+                        ? ClipRRect(
+                            borderRadius: BorderRadius.circular(25),
+                            child: Image.network(
+                              student.profile_photo_url,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) {
+                                return Center(
+                                  child: Text(
+                                    student.first_name.isNotEmpty
+                                        ? student.first_name[0].toUpperCase()
+                                        : "?",
+                                    style: const TextStyle(
+                                      fontSize: 40,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          )
+                        : Center(
+                            child: Text(
+                              student.first_name.isNotEmpty
+                                  ? student.first_name[0].toUpperCase()
+                                  : "?",
+                              style: const TextStyle(
+                                fontSize: 40,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  "${student.first_name} ${student.last_name}",
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Column(
+                    children: [
+                      _buildDetailRow(
+                        Icons.phone,
+                        Colors.green,
+                        "Telefon",
+                        student.phone.isNotEmpty
+                            ? student.phone
+                            : "Belirtilmemiş",
+                      ),
+                      const Divider(height: 1, indent: 16, endIndent: 16),
+                      _buildDetailRow(
+                        Icons.email,
+                        Colors.blue,
+                        "E-posta",
+                        student.email.isNotEmpty
+                            ? student.email
+                            : "Belirtilmemiş",
+                      ),
+                      const Divider(height: 1, indent: 16, endIndent: 16),
+                      _buildDetailRow(
+                        Icons.cake,
+                        Colors.orange,
+                        "Doğum Tarihi",
+                        student.b_date.isNotEmpty
+                            ? student.b_date
+                            : "Belirtilmemiş",
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.indigo,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    onPressed: () => Navigator.pop(ctx),
+                    icon: const Icon(Icons.close, color: Colors.white),
+                    label: const Text(
+                      "Kapat",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailRow(
+    IconData icon,
+    Color color,
+    String label,
+    String value,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(icon, color: color, size: 22),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _actionChip(String label, IconData icon, Color color) {
     return Container(
       margin: const EdgeInsets.only(right: 8),
@@ -307,7 +766,6 @@ class _StudentAssignmentScreenState extends State<StudentAssignmentScreen> {
         avatar: Icon(icon, size: 18, color: color),
         label: Text(label),
         onPressed: () {
-          // 🔥 Filtreleme butonları için (ileride eklenebilir)
           if (label == "Tümü") {
             _filterStudents("");
           }

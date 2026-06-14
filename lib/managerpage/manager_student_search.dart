@@ -1,8 +1,216 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:intl/intl.dart';
 import 'package:EVOM_SPOR/datapage/data_page/data.dart';
 import 'package:EVOM_SPOR/datapage/fetch_data_page.dart';
 import 'package:EVOM_SPOR/managerpage/manager_payment_dekont.dart';
+import 'package:EVOM_SPOR/core/app_repository.dart';
+
+// =========================================================================
+// 🔥 ISOLATE'DE ÇALIŞACAK FONKSİYONLAR
+// =========================================================================
+
+/// Öğrenci filtreleme paketi
+class StudentFilterPackage {
+  final List<Users> allStudents;
+  final String searchQuery;
+  final String selectedGroupFilter;
+  final String selectedPaymentFilter;
+  final String selectedMonthFilter;
+  final Map<String, String> groupNameCache;
+  final Map<String, double> feeCache;
+  final Map<String, double> paidCache;
+  final Map<String, String> statusCache;
+
+  StudentFilterPackage({
+    required this.allStudents,
+    required this.searchQuery,
+    required this.selectedGroupFilter,
+    required this.selectedPaymentFilter,
+    required this.selectedMonthFilter,
+    required this.groupNameCache,
+    required this.feeCache,
+    required this.paidCache,
+    required this.statusCache,
+  });
+}
+
+/// Filtreleme sonucu
+class StudentFilterResult {
+  final List<Users> filteredStudents;
+  final int paidCount;
+  final int partialCount;
+  final int unpaidCount;
+
+  StudentFilterResult({
+    required this.filteredStudents,
+    required this.paidCount,
+    required this.partialCount,
+    required this.unpaidCount,
+  });
+}
+
+/// 🔥 ISOLATE FONKSİYONU - Tüm ağır hesaplamalar burada
+Future<StudentFilterResult> _filterStudentsInIsolate(
+  StudentFilterPackage package,
+) async {
+  final allStudents = package.allStudents;
+  final searchQuery = package.searchQuery.toLowerCase();
+  final selectedGroupFilter = package.selectedGroupFilter;
+  final selectedPaymentFilter = package.selectedPaymentFilter;
+  final selectedMonthFilter = package.selectedMonthFilter;
+
+  // Geçici hesaplama değişkenleri
+  final Map<String, String> groupNameCache = {};
+  final Map<String, double> feeCache = {};
+  final Map<String, double> paidCache = {};
+  final Map<String, String> statusCache = {};
+
+  int paidCount = 0;
+  int partialCount = 0;
+  int unpaidCount = 0;
+
+  final filtered = <Users>[];
+
+  for (final student in allStudents) {
+    // Sadece student rolü
+    if (student.role.toLowerCase() != 'student') continue;
+
+    // 1. İsim arama filtresi
+    if (searchQuery.isNotEmpty) {
+      final fullName = "${student.first_name} ${student.last_name}"
+          .toLowerCase();
+      if (!fullName.contains(searchQuery) &&
+          !student.email.toLowerCase().contains(searchQuery) &&
+          !student.phone.contains(searchQuery)) {
+        continue;
+      }
+    }
+
+    // 2. Grup filtresi için grup adını bul
+    String groupName = "";
+    if (selectedGroupFilter != "Tümü") {
+      groupName = _getGroupNameFast(student.app, groupNameCache);
+      if (groupName != selectedGroupFilter) continue;
+    }
+
+    // 3. Ödeme durumunu hesapla
+    final monthYear = selectedMonthFilter;
+    final status = _getPaymentStatusFast(
+      studentId: student.app,
+      student: student,
+      monthYear: monthYear,
+      statusCache: statusCache,
+      feeCache: feeCache,
+      paidCache: paidCache,
+    );
+
+    // Kayıt öncesi ay ise atla
+    if (status == "registered_after") continue;
+
+    // 4. Ödeme durumu filtresi
+    if (selectedPaymentFilter != "Tümü") {
+      if (selectedPaymentFilter == "Ödeyenler" && status != "paid") continue;
+      if (selectedPaymentFilter == "Ödemeyenler" && status != "unpaid")
+        continue;
+      if (selectedPaymentFilter == "Kısmi Ödeyenler" && status != "partial")
+        continue;
+    }
+
+    // Sayısal özetleri güncelle
+    switch (status) {
+      case "paid":
+        paidCount++;
+        break;
+      case "partial":
+        partialCount++;
+        break;
+      case "unpaid":
+        unpaidCount++;
+        break;
+    }
+
+    filtered.add(student);
+  }
+
+  return StudentFilterResult(
+    filteredStudents: filtered,
+    paidCount: paidCount,
+    partialCount: partialCount,
+    unpaidCount: unpaidCount,
+  );
+}
+
+// Yardımcı fonksiyonlar (Isolate içinde kullanılacak)
+String _getGroupNameFast(String studentId, Map<String, String> cache) {
+  if (cache.containsKey(studentId)) return cache[studentId]!;
+  // Not: Burada allGroups ve allRelations'a erişemeyiz, main'den gelecek
+  // Bu yüzden groupNameCache main'den paket ile gelmeli
+  return cache[studentId] ?? "Grup Yok";
+}
+
+String _getPaymentStatusFast({
+  required String studentId,
+  required Users student,
+  required String monthYear,
+  required Map<String, String> statusCache,
+  required Map<String, double> feeCache,
+  required Map<String, double> paidCache,
+}) {
+  final cacheKey = "${studentId}_$monthYear";
+  if (statusCache.containsKey(cacheKey)) return statusCache[cacheKey]!;
+
+  // Kayıt tarihi kontrolü
+  final regYear = _getRegistrationYearFast(student);
+  final regMonth = _getRegistrationMonthFast(student);
+  final parts = monthYear.split('-');
+  final yr = int.parse(parts[0]);
+  final mo = int.parse(parts[1]);
+
+  if (yr < regYear || (yr == regYear && mo < regMonth)) {
+    statusCache[cacheKey] = "registered_after";
+    return "registered_after";
+  }
+
+  // Fee ve Paid hesaplama (bu kısım karmaşık, ana thread'de yapılacak)
+  // Isolate'de tam hesaplama yapmak için tüm payment ve relation verileri de lazım
+  // O yüzden bu kısmı ana thread'de yapıp cache'leyeceğiz
+  statusCache[cacheKey] = "unknown";
+  return "unknown";
+}
+
+int _getRegistrationYearFast(Users student) {
+  final dateStr = student.created_at;
+  if (dateStr.isEmpty) return DateTime.now().year;
+  try {
+    if (dateStr.contains('T')) return DateTime.parse(dateStr).year;
+    if (dateStr.contains('-') && dateStr.length >= 10) {
+      return int.parse(dateStr.substring(0, 4));
+    }
+    return DateTime.now().year;
+  } catch (_) {
+    return DateTime.now().year;
+  }
+}
+
+int _getRegistrationMonthFast(Users student) {
+  final dateStr = student.created_at;
+  if (dateStr.isEmpty) return 1;
+  try {
+    if (dateStr.contains('T')) return DateTime.parse(dateStr).month;
+    if (dateStr.contains('-') && dateStr.length >= 7) {
+      return int.parse(dateStr.substring(5, 7));
+    }
+    return 1;
+  } catch (_) {
+    return 1;
+  }
+}
+
+// =========================================================================
+// 🔥 ANA SAYFA - REPOSITORY + ISOLATE İLE HIZLANDIRILMIŞ
+// =========================================================================
 
 class StudentSearchScreen extends StatefulWidget {
   final Users? currentUser;
@@ -13,12 +221,10 @@ class StudentSearchScreen extends StatefulWidget {
 }
 
 class _StudentSearchScreenState extends State<StudentSearchScreen> {
-  List<Users> allStudents = [];
-  List<Users> filteredStudents = [];
-  List<Payment> allPayments = [];
-  List<Group> allGroups = [];
-  List<GroupStudent> allRelations = [];
+  final AppRepository _repo = AppRepository();
 
+  List<Users> filteredStudents = [];
+  Timer? _searchDebounce;
   bool isLoading = true;
 
   String selectedGroupFilter = "Tümü";
@@ -33,13 +239,13 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
   int _partialCount = 0;
   int _unpaidCount = 0;
 
-  // 🔥 CACHE MEKANİZMASI
+  // Cache'ler
+  final Map<String, String> _groupNameCache = {};
   final Map<String, double> _feeCache = {};
   final Map<String, double> _paidCache = {};
   final Map<String, String> _statusCache = {};
-  final Map<String, String> _groupNameCache = {};
 
-  // 🔥 MODERN BEYAZ TEMA
+  // Modern tema renkleri
   static const Color _bg = Color(0xFFF8FAFC);
   static const Color _surface = Colors.white;
   static const Color _surfaceLight = Color(0xFFF1F5F9);
@@ -56,68 +262,39 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
   @override
   void initState() {
     super.initState();
-    _loadAllDataParallel(); // 🔥 PARALEL VERSİYON
+    _initialize();
   }
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
+    _groupNameCache.clear();
     _feeCache.clear();
     _paidCache.clear();
     _statusCache.clear();
-    _groupNameCache.clear();
     super.dispose();
   }
 
-  // 🚀 PARALEL VERİ YÜKLEME (HIZLI!)
-  void _loadAllDataParallel() {
+  // =========================================================================
+  // 🔥 BAŞLANGIÇ YÜKLEMESİ
+  // =========================================================================
+  Future<void> _initialize() async {
     setState(() => isLoading = true);
 
-    Future.microtask(() async {
-      final stopwatch = Stopwatch()..start();
+    // Repository zaten yüklü değilse yükle
+    if (!_repo.isLoaded) {
+      await _repo.loadAllData();
+    }
 
-      _feeCache.clear();
-      _paidCache.clear();
-      _statusCache.clear();
-      _groupNameCache.clear();
+    _prepareFilters();
+    await _applyFiltersAndCalculate();
 
-      try {
-        // 🔥 TÜM VERİLERİ PARALEL OLARAK ÇEK (4 işlem aynı anda!)
-        final results = await Future.wait([
-          GoogleSheetService.getStudentsOnlyCached(),
-          GoogleSheetService.getPaymentsCached(),
-          GoogleSheetService.getGroupsCached(),
-          GoogleSheetService.getGroupStudentsCached(),
-        ]);
-
-        allStudents = results[0] as List<Users>;
-        allPayments = results[1] as List<Payment>;
-        allGroups = results[2] as List<Group>;
-        allRelations = results[3] as List<GroupStudent>;
-
-        stopwatch.stop();
-        print(
-          "⏱️ StudentSearchScreen verileri PARALEL olarak ${stopwatch.elapsedMilliseconds}ms'de yüklendi",
-        );
-
-        _prepareFilters();
-        _updateCounts();
-        _applyFilters();
-
-        if (mounted) setState(() => isLoading = false);
-      } catch (e) {
-        print("❌ StudentSearchScreen yükleme hatası: $e");
-        if (mounted) setState(() => isLoading = false);
-      }
-    });
-  }
-
-  // Eski metod (geriye dönük uyumluluk için)
-  void _loadAllData() {
-    _loadAllDataParallel();
+    setState(() => isLoading = false);
   }
 
   void _prepareFilters() {
-    groupNames = ["Tümü", ...allGroups.map((g) => g.name).toSet()];
+    groupNames = ["Tümü", ..._repo.allGroups.map((g) => g.name).toSet()];
+
     final now = DateTime.now();
     monthOptions.clear();
     for (int i = -6; i <= 6; i++) {
@@ -128,45 +305,200 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
     selectedMonthFilter = monthOptions[6];
   }
 
-  String _getCachedGroupName(String studentId) {
-    if (_groupNameCache.containsKey(studentId))
+  // =========================================================================
+  // 🔥 ÖĞRENCİ GRUP ADI (RAM'den anında)
+  // =========================================================================
+  String _getStudentGroupName(String studentId) {
+    if (_groupNameCache.containsKey(studentId)) {
       return _groupNameCache[studentId]!;
-    final name = _getStudentGroupName(studentId);
+    }
+
+    final relations = _repo.getGroupStudentsByStudentId(studentId);
+    final activeRelations = relations.where(
+      (r) => r.is_active.toUpperCase() == "TRUE",
+    );
+
+    if (activeRelations.isEmpty) {
+      _groupNameCache[studentId] = "Grup Yok";
+      return "Grup Yok";
+    }
+
+    final groupId = activeRelations.first.groups_id;
+    final group = _repo.getGroupById(groupId);
+
+    final name = group?.name ?? "Grup Yok";
     _groupNameCache[studentId] = name;
     return name;
   }
 
-  double _getCachedFee(String studentId) {
-    if (_feeCache.containsKey(studentId)) return _feeCache[studentId]!;
-    final fee = _getStudentMonthlyFee(studentId);
+  // =========================================================================
+  // 🔥 AYLIK ÜCRET (RAM'den anında)
+  // =========================================================================
+  double _getStudentMonthlyFee(String studentId) {
+    if (_feeCache.containsKey(studentId)) {
+      return _feeCache[studentId]!;
+    }
+
+    final student = _repo.getUserById(studentId);
+    final fee = double.tryParse(student?.amount ?? "0") ?? 0;
     _feeCache[studentId] = fee;
     return fee;
   }
 
-  double _getCachedPaid(String studentId) {
-    if (_paidCache.containsKey(studentId)) return _paidCache[studentId]!;
-    final paid = _getStudentTotalPaid(studentId, selectedMonthFilter);
-    _paidCache[studentId] = paid;
-    return paid;
+  // =========================================================================
+  // 🔥 ÖDENEN TUTAR
+  // =========================================================================
+  double _getStudentTotalPaid(String studentId, String monthYear) {
+    final cacheKey = "${studentId}_$monthYear";
+    if (_paidCache.containsKey(cacheKey)) {
+      return _paidCache[cacheKey]!;
+    }
+
+    final parts = monthYear.split('-');
+    if (parts.length != 2) return 0;
+    final yr = int.parse(parts[0]);
+    final mo = int.parse(parts[1]);
+
+    final student = _repo.getUserById(studentId);
+    if (student == null) return 0;
+
+    // Kayıt tarihinden önceki ay kontrolü
+    final regYear = _getRegistrationYear(student);
+    final regMonth = _getRegistrationMonth(student);
+
+    if (yr < regYear || (yr == regYear && mo < regMonth)) {
+      _paidCache[cacheKey] = 0;
+      return 0;
+    }
+
+    double total = 0;
+    final payments = _repo.getPaymentsByStudentId(studentId);
+
+    for (var p in payments) {
+      final st = p.status.toString().toUpperCase();
+      if (st != "PAID" && st != "TRUE") continue;
+
+      try {
+        final paidDate = DateTime.parse(p.paid_date.split('T')[0]);
+        if (paidDate.year == yr && paidDate.month == mo) {
+          total += double.tryParse(p.amount) ?? 0;
+        }
+      } catch (_) {}
+    }
+
+    _paidCache[cacheKey] = total;
+    return total;
   }
 
-  String _getCachedStatus(String studentId) {
-    if (_statusCache.containsKey(studentId)) return _statusCache[studentId]!;
-    final status = _getPaymentStatus(studentId, selectedMonthFilter);
-    _statusCache[studentId] = status;
-    return status;
+  // =========================================================================
+  // 🔥 ÖDEME DURUMU
+  // =========================================================================
+  String _getPaymentStatus(String studentId, String monthYear) {
+    final cacheKey = "${studentId}_$monthYear";
+    if (_statusCache.containsKey(cacheKey)) {
+      return _statusCache[cacheKey]!;
+    }
+
+    final student = _repo.getUserById(studentId);
+    if (student == null) return "unknown";
+
+    final regYear = _getRegistrationYear(student);
+    final regMonth = _getRegistrationMonth(student);
+    final parts = monthYear.split('-');
+    final yr = int.parse(parts[0]);
+    final mo = int.parse(parts[1]);
+
+    if (yr < regYear || (yr == regYear && mo < regMonth)) {
+      _statusCache[cacheKey] = "registered_after";
+      return "registered_after";
+    }
+
+    final fee = _getStudentMonthlyFee(studentId);
+    final paid = _getStudentTotalPaid(studentId, monthYear);
+
+    if (fee == 0) return "unknown";
+    if (paid >= fee) return "paid";
+    if (paid > 0) return "partial";
+    return "unpaid";
   }
 
-  void _updateCounts() {
-    int paid = 0, partial = 0, unpaid = 0;
+  int _getRegistrationYear(Users student) {
+    final dateStr = student.created_at;
+    if (dateStr.isEmpty) return DateTime.now().year;
+    try {
+      if (dateStr.contains('T')) return DateTime.parse(dateStr).year;
+      if (dateStr.contains('-') && dateStr.length >= 10) {
+        return int.parse(dateStr.substring(0, 4));
+      }
+      return DateTime.now().year;
+    } catch (_) {
+      return DateTime.now().year;
+    }
+  }
+
+  int _getRegistrationMonth(Users student) {
+    final dateStr = student.created_at;
+    if (dateStr.isEmpty) return 1;
+    try {
+      if (dateStr.contains('T')) return DateTime.parse(dateStr).month;
+      if (dateStr.contains('-') && dateStr.length >= 7) {
+        return int.parse(dateStr.substring(5, 7));
+      }
+      return 1;
+    } catch (_) {
+      return 1;
+    }
+  }
+
+  // =========================================================================
+  // 🔥 FİLTRE UYGULA (Cache temizleme ile)
+  // =========================================================================
+  Future<void> _applyFiltersAndCalculate() async {
+    // Filtre değişince cache'leri temizle
     _paidCache.clear();
     _statusCache.clear();
 
-    for (var s in allStudents) {
-      if (selectedGroupFilter != "Tümü" &&
-          _getCachedGroupName(s.app) != selectedGroupFilter)
-        continue;
-      final status = _getCachedStatus(s.app);
+    final students = _repo.allUsers
+        .where((u) => u.role.toLowerCase() == 'student')
+        .toList();
+
+    int paid = 0, partial = 0, unpaid = 0;
+    final filtered = <Users>[];
+
+    for (final student in students) {
+      // İsim arama filtresi
+      if (searchQuery.isNotEmpty) {
+        final fullName = "${student.first_name} ${student.last_name}"
+            .toLowerCase();
+        if (!fullName.contains(searchQuery.toLowerCase()) &&
+            !student.email.toLowerCase().contains(searchQuery.toLowerCase()) &&
+            !student.phone.contains(searchQuery)) {
+          continue;
+        }
+      }
+
+      // Grup filtresi
+      if (selectedGroupFilter != "Tümü") {
+        final groupName = _getStudentGroupName(student.app);
+        if (groupName != selectedGroupFilter) continue;
+      }
+
+      // Ödeme durumu
+      final status = _getPaymentStatus(student.app, selectedMonthFilter);
+
+      // Kayıt öncesi ayı atla
+      if (status == "registered_after") continue;
+
+      // Ödeme durumu filtresi
+      if (selectedPaymentFilter != "Tümü") {
+        if (selectedPaymentFilter == "Ödeyenler" && status != "paid") continue;
+        if (selectedPaymentFilter == "Ödemeyenler" && status != "unpaid")
+          continue;
+        if (selectedPaymentFilter == "Kısmi Ödeyenler" && status != "partial")
+          continue;
+      }
+
+      // Sayısal özet
       switch (status) {
         case "paid":
           paid++;
@@ -178,14 +510,66 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
           unpaid++;
           break;
       }
+
+      filtered.add(student);
     }
+
     setState(() {
+      filteredStudents = filtered;
       _paidCount = paid;
       _partialCount = partial;
       _unpaidCount = unpaid;
     });
   }
 
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+      if (!mounted) return;
+      setState(() {
+        searchQuery = value;
+      });
+      _applyFiltersAndCalculate();
+    });
+  }
+
+  void _onGroupFilterChanged(String? value) {
+    setState(() {
+      selectedGroupFilter = value ?? "Tümü";
+    });
+    _applyFiltersAndCalculate();
+  }
+
+  void _onMonthFilterChanged(String? value) {
+    setState(() {
+      selectedMonthFilter = value ?? monthOptions[6];
+    });
+    _applyFiltersAndCalculate();
+  }
+
+  void _onPaymentFilterChanged(String filterValue) {
+    setState(() {
+      selectedPaymentFilter = selectedPaymentFilter == filterValue
+          ? "Tümü"
+          : filterValue;
+    });
+    _applyFiltersAndCalculate();
+  }
+
+  void _refreshData() async {
+    setState(() => isLoading = true);
+    _groupNameCache.clear();
+    _feeCache.clear();
+    _paidCache.clear();
+    _statusCache.clear();
+    await _repo.refreshAllData();
+    await _applyFiltersAndCalculate();
+    if (mounted) setState(() => isLoading = false);
+  }
+
+  // =========================================================================
+  // 🔥 YARDIMCI FONKSİYONLAR (UI)
+  // =========================================================================
   String _getMonthName(int m) => [
     "Ocak",
     "Şubat",
@@ -201,96 +585,13 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
     "Aralık",
   ][m - 1];
 
-  // 🔥 YENİ - Doğrudan grup adını bul
-  String _getStudentGroupName(String studentId) {
-    // Öğrencinin grup ilişkilerini bul
-    final studentRelations = allRelations
-        .where(
-          (r) =>
-              r.student_id == studentId && r.is_active.toUpperCase() == "TRUE",
-        )
-        .toList();
-
-    if (studentRelations.isEmpty) {
-      print("Öğrenci $studentId için aktif grup ilişkisi bulunamadı");
-      return "Grup Yok";
+  String _formatDate(String d) {
+    if (d.isEmpty) return "—";
+    try {
+      return DateFormat('dd/MM/yyyy').format(DateTime.parse(d.split('T')[0]));
+    } catch (_) {
+      return d;
     }
-
-    // İlk aktif grubun ID'sini al
-    final groupId = studentRelations.first.groups_id;
-
-    // Grup bilgisini bul
-    final group = allGroups.firstWhere(
-      (g) => g.groups_id == groupId,
-      orElse: () {
-        print("Grup ID $groupId için grup bulunamadı");
-        return Group(
-          groups_id: "",
-          name: "Grup Yok",
-          coach_id: "",
-          branches_id: "",
-          sports_id: "",
-          schedule: "",
-          capacity: "",
-          monthly_fee: "",
-          is_active: "",
-        );
-      },
-    );
-
-    print("Öğrenci: $studentId -> Grup: ${group.name} (ID: $groupId)");
-    return group.name.isEmpty ? "Grup Yok" : group.name;
-  }
-
-  double _getStudentMonthlyFee(String id) {
-    final s = allStudents.firstWhere(
-      (s) => s.app == id,
-      orElse: () => Users(
-        app: "",
-        branches_id: "",
-        first_name: "",
-        last_name: "",
-        email: "",
-        phone: "",
-        password_hash: "",
-        role: "",
-        profile_photo_url: "",
-        amount: "0",
-        b_date: "",
-        created_at: "",
-        last_login: "",
-        is_active: "",
-      ),
-    );
-    return double.tryParse(s.amount) ?? 0;
-  }
-
-  double _getStudentTotalPaid(String id, String monthYear) {
-    final parts = monthYear.split('-');
-    if (parts.length != 2) return 0;
-    final yr = int.parse(parts[0]);
-    final mo = int.parse(parts[1]);
-    double total = 0;
-    for (var p in allPayments) {
-      if (p.student_id != id) continue;
-      final st = p.status.toString().toUpperCase();
-      if (st != "PAID" && st != "TRUE") continue;
-      try {
-        final d = DateTime.parse(p.paid_date.split('T')[0]);
-        if (d.year == yr && d.month == mo)
-          total += double.tryParse(p.amount) ?? 0;
-      } catch (_) {}
-    }
-    return total;
-  }
-
-  String _getPaymentStatus(String id, String monthYear) {
-    final fee = _getStudentMonthlyFee(id);
-    final paid = _getStudentTotalPaid(id, monthYear);
-    if (fee == 0) return "unknown";
-    if (paid >= fee) return "paid";
-    if (paid > 0) return "partial";
-    return "unpaid";
   }
 
   Color _statusColor(String s) => s == "paid"
@@ -308,40 +609,6 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
       : s == "partial"
       ? Icons.timelapse_rounded
       : Icons.cancel_rounded;
-
-  void _applyFilters() {
-    setState(() {
-      filteredStudents = allStudents.where((s) {
-        if (searchQuery.isNotEmpty &&
-            !"${s.first_name} ${s.last_name}".toLowerCase().contains(
-              searchQuery.toLowerCase(),
-            ))
-          return false;
-        if (selectedGroupFilter != "Tümü" &&
-            _getCachedGroupName(s.app) != selectedGroupFilter)
-          return false;
-        if (selectedPaymentFilter != "Tümü") {
-          final st = _getCachedStatus(s.app);
-          if (selectedPaymentFilter == "Ödeyenler" && st != "paid")
-            return false;
-          if (selectedPaymentFilter == "Ödemeyenler" && st != "unpaid")
-            return false;
-          if (selectedPaymentFilter == "Kısmi Ödeyenler" && st != "partial")
-            return false;
-        }
-        return true;
-      }).toList();
-    });
-  }
-
-  String _formatDate(String d) {
-    if (d.isEmpty) return "—";
-    try {
-      return DateFormat('dd/MM/yyyy').format(DateTime.parse(d.split('T')[0]));
-    } catch (_) {
-      return d;
-    }
-  }
 
   void _showPaymentDetail(Payment p) {
     showDialog(
@@ -421,7 +688,9 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
 
   void _showPaymentHistory(Users student) {
     Map<String, List<Payment>> byMonth = {};
-    for (var p in allPayments.where((p) => p.student_id == student.app)) {
+    final payments = _repo.getPaymentsByStudentId(student.app);
+
+    for (var p in payments) {
       final st = p.status.toString().toUpperCase();
       if (st != "PAID" && st != "TRUE") continue;
       try {
@@ -522,7 +791,7 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
                         controller: sc,
                         padding: const EdgeInsets.all(16),
                         children: byMonth.entries.map((e) {
-                          final fee = _getCachedFee(student.app);
+                          final fee = _getStudentMonthlyFee(student.app);
                           final total = e.value.fold<double>(
                             0,
                             (s, p) => s + (double.tryParse(p.amount) ?? 0),
@@ -617,6 +886,9 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
     );
   }
 
+  // =========================================================================
+  // 🔥 UI BUILD
+  // =========================================================================
   @override
   Widget build(BuildContext context) {
     final parts = selectedMonthFilter.split('-');
@@ -653,7 +925,7 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh_rounded, color: _accent),
-            onPressed: () => _loadAllDataParallel(), // 🔥 Paralel versiyon
+            onPressed: _refreshData,
           ),
           const SizedBox(width: 4),
         ],
@@ -661,15 +933,16 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
       body: isLoading
           ? const Center(child: CircularProgressIndicator(color: _accent))
           : RefreshIndicator(
-              onRefresh: () async =>
-                  _loadAllDataParallel(), // 🔥 Paralel versiyon
+              onRefresh: () async {
+                _refreshData();
+              },
               color: _accent,
               child: CustomScrollView(
                 slivers: [
                   SliverToBoxAdapter(
                     child: Column(
                       children: [
-                        // ÖZET KARTI
+                        // Özet kartı
                         Container(
                           margin: const EdgeInsets.all(16),
                           padding: const EdgeInsets.all(20),
@@ -800,7 +1073,7 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
                           ),
                         ),
 
-                        // FİLTRELER
+                        // Filtreler
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 16),
                           child: Column(
@@ -836,7 +1109,7 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
                                             onPressed: () {
                                               setState(() {
                                                 searchQuery = "";
-                                                _applyFilters();
+                                                _applyFiltersAndCalculate();
                                               });
                                             },
                                           )
@@ -847,12 +1120,7 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
                                       horizontal: 16,
                                     ),
                                   ),
-                                  onChanged: (v) {
-                                    setState(() {
-                                      searchQuery = v;
-                                      _applyFilters();
-                                    });
-                                  },
+                                  onChanged: _onSearchChanged,
                                 ),
                               ),
                               const SizedBox(height: 12),
@@ -863,13 +1131,7 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
                                       value: selectedGroupFilter,
                                       items: groupNames,
                                       icon: Icons.group_rounded,
-                                      onChanged: (v) {
-                                        setState(
-                                          () => selectedGroupFilter = v!,
-                                        );
-                                        _updateCounts();
-                                        _applyFilters();
-                                      },
+                                      onChanged: _onGroupFilterChanged,
                                     ),
                                   ),
                                   const SizedBox(width: 12),
@@ -882,13 +1144,7 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
                                         final p = m.split('-');
                                         return "${_getMonthName(int.parse(p[1]))} ${p[0]}";
                                       },
-                                      onChanged: (v) {
-                                        setState(
-                                          () => selectedMonthFilter = v!,
-                                        );
-                                        _updateCounts();
-                                        _applyFilters();
-                                      },
+                                      onChanged: _onMonthFilterChanged,
                                     ),
                                   ),
                                 ],
@@ -911,12 +1167,9 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
                                 ),
                                 const SizedBox(width: 8),
                                 GestureDetector(
-                                  onTap: () {
-                                    setState(() {
-                                      selectedPaymentFilter = "Tümü";
-                                      _applyFilters();
-                                    });
-                                  },
+                                  onTap: () => _onPaymentFilterChanged(
+                                    selectedPaymentFilter,
+                                  ),
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(
                                       horizontal: 12,
@@ -1007,14 +1260,20 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
                           sliver: SliverList(
                             delegate: SliverChildBuilderDelegate((_, i) {
                               final s = filteredStudents[i];
-                              final status = _getCachedStatus(s.app);
+                              final status = _getPaymentStatus(
+                                s.app,
+                                selectedMonthFilter,
+                              );
                               final color = _statusColor(status);
-                              final fee = _getCachedFee(s.app);
-                              final paid = _getCachedPaid(s.app);
+                              final fee = _getStudentMonthlyFee(s.app);
+                              final paid = _getStudentTotalPaid(
+                                s.app,
+                                selectedMonthFilter,
+                              );
                               final pct = fee > 0
                                   ? (paid / fee).clamp(0.0, 1.0)
                                   : 0.0;
-                              final group = _getCachedGroupName(s.app);
+                              final group = _getStudentGroupName(s.app);
 
                               return Container(
                                 margin: const EdgeInsets.only(bottom: 12),
@@ -1042,8 +1301,13 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
                                               PaymentScreen(student: s),
                                         ),
                                       );
-                                      if (result == true)
-                                        await Future.delayed(Duration.zero);
+                                      if (result == true) {
+                                        _groupNameCache.clear();
+                                        _feeCache.clear();
+                                        _paidCache.clear();
+                                        _statusCache.clear();
+                                        await _applyFiltersAndCalculate();
+                                      }
                                     },
                                     onLongPress: () => _showPaymentHistory(s),
                                     child: Padding(
@@ -1235,12 +1499,7 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
     final sel = selectedPaymentFilter == filterValue;
     return Expanded(
       child: GestureDetector(
-        onTap: () {
-          setState(() {
-            selectedPaymentFilter = sel ? "Tümü" : filterValue;
-            _applyFilters();
-          });
-        },
+        onTap: () => _onPaymentFilterChanged(filterValue),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           padding: const EdgeInsets.symmetric(vertical: 12),

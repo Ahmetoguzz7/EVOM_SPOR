@@ -1,9 +1,10 @@
 // AccountantInterface.dart - DÜZELTİLMİŞ VERSİYON
 
+import 'package:EVOM_SPOR/core/app_repository.dart';
 import 'package:EVOM_SPOR/managerpage/antremanprogram.dart';
 import 'package:EVOM_SPOR/managerpage/student_P&A.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
+
 import 'package:EVOM_SPOR/managerpage/payment_history.dart';
 import 'package:EVOM_SPOR/datapage/data_page/data.dart';
 import 'package:EVOM_SPOR/datapage/fetch_data_page.dart';
@@ -37,7 +38,7 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
   List<Group> _allGroups = [];
   List<GroupStudent> _allRelations = [];
   List<Users> _allStudents = [];
-
+  List<Users> _allUsers = [];
   @override
   void initState() {
     super.initState();
@@ -59,6 +60,7 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
         GoogleSheetService.getGroupStudentsCached(), // 5: List<GroupStudent>
         GoogleSheetService.getNotifications(
           userId: "all",
+          forceRefresh: true,
         ), // 6: List<Notifications>
       ]);
 
@@ -69,11 +71,11 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
       final payments = results[4] as List<Payment>;
       final relations = results[5] as List<GroupStudent>;
       final allNotifications = results[6] as List<Notifications>;
-
+      _allUsers = allUsers;
       stopwatch.stop();
-      print(
+      /* print(
         "⏱️ Tüm veriler PARALEL olarak ${stopwatch.elapsedMilliseconds}ms'de yüklendi",
-      );
+      );*/
 
       // Antrenman programı için verileri sakla
       _allGroups = groups;
@@ -166,8 +168,8 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
         'upcomingBirthdays': birthdays,
       };
     } catch (e, stackTrace) {
-      print("❌ Veri yükleme hatası: $e");
-      print(stackTrace);
+      // print("❌ Veri yükleme hatası: $e");
+      // print(stackTrace);
       return {
         'totalStudents': 0,
         'totalCoaches': 0,
@@ -235,13 +237,14 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
     ];
     final now = DateTime.now();
     return days[now.weekday - 1];
-  }
+  } // 🔥 Bugün Antrenmanı Olanlar ve Gruplar Kartı
 
-  // Bugün Antrenmanı Olanlar Kartı
+  //// 🔥 GELİŞTİRİLMİŞ: Bugün Antrenmanı Olan Gruplar Kartı (Antrenör isimli)
   Widget _buildTodayTrainingCard() {
-    final todaysStudents = _getTodaysStudents();
+    final todaysGroups = _getTodaysGroups();
+    final todayName = _getTodayName();
 
-    if (todaysStudents.isEmpty) {
+    if (todaysGroups.isEmpty) {
       return const SizedBox.shrink();
     }
 
@@ -267,74 +270,199 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
               Icon(Icons.sports, color: Colors.orange, size: 20),
               SizedBox(width: 8),
               Text(
-                "🏃 Bugün Antrenmanı Olanlar",
+                "🏃 Bugünkü Antrenman Programı",
                 style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
               ),
             ],
           ),
-          const SizedBox(height: 10),
-          ...todaysStudents
-              .take(3)
-              .map(
-                (student) => Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Row(
-                    children: [
-                      CircleAvatar(
-                        radius: 16,
-                        backgroundColor: Colors.orange.shade100,
-                        child: Text(
-                          student.first_name[0].toUpperCase(),
-                          style: const TextStyle(
-                            color: Colors.orange,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          "${student.first_name} ${student.last_name}",
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.orange.shade50,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          "Bugün",
-                          style: TextStyle(
-                            color: Colors.orange.shade700,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
+          const SizedBox(height: 12),
+          ...todaysGroups.map((group) {
+            final scheduleToday = _getGroupScheduleForDay(group, todayName);
+
+            // 🔥 Antrenör ismini bul
+            String coachName = "Atanmamış";
+            final coachUser = _allUsers.firstWhere(
+              (user) => user.app.toString() == group.coach_id.toString(),
+              orElse: () => Users(
+                app: "",
+                branches_id: "",
+                first_name: "",
+                last_name: "",
+                email: "",
+                phone: "",
+                password_hash: "",
+                role: "",
+                profile_photo_url: "",
+                amount: "",
+                b_date: "",
+                created_at: "",
+                last_login: "",
+                is_active: "",
+              ),
+            );
+            if (coachUser.first_name.isNotEmpty) {
+              coachName = "${coachUser.first_name} ${coachUser.last_name}"
+                  .trim();
+              // Uzun isimleri kısalt
+              if (coachName.length > 20) {
+                coachName = coachName.substring(0, 18) + "..";
+              }
+            }
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.teal.shade50,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: Colors.teal.shade200),
+              ),
+              child: Row(
+                children: [
+                  // Grup İkonu
+                  Container(
+                    width: 45,
+                    height: 45,
+                    decoration: BoxDecoration(
+                      color: Colors.teal.shade100,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.group,
+                      size: 24,
+                      color: Colors.teal,
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 12),
+                  // Bilgiler
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Grup Adı
+                        Text(
+                          group.name,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        // Antrenör Adı (tek satırda, ikonlu)
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.person,
+                              size: 12,
+                              color: coachName != "Atanmamış"
+                                  ? Colors.teal.shade700
+                                  : Colors.grey.shade500,
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                coachName,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: coachName != "Atanmamış"
+                                      ? Colors.teal.shade700
+                                      : Colors.grey.shade500,
+                                  fontWeight: coachName != "Atanmamış"
+                                      ? FontWeight.w500
+                                      : FontWeight.normal,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Saat
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.teal.shade100,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Text(
+                      scheduleToday,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.teal.shade700,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-          if (todaysStudents.length > 3)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                "+ ${todaysStudents.length - 3} öğrenci daha",
-                style: TextStyle(color: Colors.grey.shade500, fontSize: 11),
-              ),
-            ),
+            );
+          }),
         ],
       ),
     );
+  }
+
+  // Grubun belirli bir gündeki programını getir
+  String _getGroupScheduleForDay(Group group, String dayName) {
+    final schedule = group.schedule;
+    final pattern = RegExp('$dayName:(\\d{2}:\\d{2})-(\\d{2}:\\d{2})');
+    final match = pattern.firstMatch(schedule);
+    if (match != null) {
+      return "${match.group(1)} - ${match.group(2)}";
+    }
+    return "Saat belirtilmemiş";
+  }
+
+  List<Group> _getTodaysGroups() {
+    final todayName = _getTodayName(); // "Cuma"
+    final todayGroups = <Group>[];
+
+    for (var group in _allGroups) {
+      // 🔥 KÜÇÜK/BÜYÜK HARF DUYARSIZ KARŞILAŞTIRMA
+      if (group.schedule.toLowerCase().contains(todayName.toLowerCase())) {
+        todayGroups.add(group);
+      }
+    }
+
+    // Saate göre sırala
+    todayGroups.sort((a, b) {
+      final aTime = _getGroupStartTime(a, todayName);
+      final bTime = _getGroupStartTime(b, todayName);
+      return _timeToMinutes(aTime).compareTo(_timeToMinutes(bTime));
+    });
+
+    print(
+      "🔥 Bugün ($todayName) dersi olan grup sayısı: ${todayGroups.length}",
+    );
+    return todayGroups;
+  }
+
+  // Grubun bugünkü başlangıç saatini al
+  String _getGroupStartTime(Group group, String dayName) {
+    final schedule = group.schedule;
+    final pattern = RegExp('$dayName:(\\d{2}:\\d{2})-(\\d{2}:\\d{2})');
+    final match = pattern.firstMatch(schedule);
+    if (match != null) {
+      return match.group(1) ?? "00:00";
+    }
+    return "23:59";
+  }
+
+  // Saat formatını karşılaştırma için dakikaya çevir
+  int _timeToMinutes(String time) {
+    final parts = time.split(':');
+    if (parts.length == 2) {
+      return int.parse(parts[0]) * 60 + int.parse(parts[1]);
+    }
+    return 0;
   }
 
   @override
@@ -472,7 +600,7 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
             ),
             const SizedBox(height: 30),
             const Text(
-              " EVOM SPOR - Yönetici Girişi",
+              " EVOM SPOR - Muhasebeci Girişi",
               style: TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
@@ -860,41 +988,53 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
   Widget _buildMenuGrid() {
     final List<Map<String, dynamic>> allMenus = [
       {
-        "title": "Öğrenci & Ödeme",
+        "title": "Öğrenci Ödeme Alma\nSayfası",
+        "subtitle": "Öğrencilerin aylık aidatlarını alabilirsiniz.",
         "icon": Icons.search,
         "color": Colors.teal,
         "route": "student_search",
       },
       {
+        "title": "Öğrenci Arama & Kayıt Oluştur",
+        "subtitle":
+            "Yeni gelen öğrenci kaydı açabilir ya da var olan öğrencinin bilgilerini(şifre hariç) güncelleyebilirsiniz.",
+        "icon": Icons.person_add,
+        "color": Colors.green,
+        "route": "register",
+      },
+      {
         "title": "Yoklama Al",
+        "subtitle":
+            "Öğrencilerin idmana katılıp/katılmadığının görüntüleme ve yoklama alabilirsiniz.",
         "icon": Icons.fact_check,
         "color": Colors.orange,
         "route": "attendance",
       },
       {
         "title": "Duyuru Gönder",
+        "subtitle":
+            "Herkes / Gruba/ Kişiye olacak şekilde duyuru atayabilirsiniz.",
         "icon": Icons.campaign,
         "color": Colors.purple,
         "route": "notification",
       },
       {
         "title": "Ödeme Hatırlatma",
+        "subtitle":
+            "Öğrencilerin kayıt olma tarihlerine göre ödeme yapılmayan öğrencileri takip edebilirsiniz.",
         "icon": Icons.notifications_active,
         "color": Colors.red,
         "route": "payment_reminder",
       },
       {
         "title": "Antrenman Programı",
+        "subtitle":
+            "Haftalık grupların antrenman programlarını takip edebilirsiniz ve yeni antrenman ekleyebilir/silebilirisiniz.",
         "icon": Icons.calendar_month,
         "color": Colors.teal,
         "route": "training_schedule",
       },
-      {
-        "title": "Kayıt Oluştur",
-        "icon": Icons.person_add,
-        "color": Colors.green,
-        "route": "register",
-      },
+
       {
         "title": "Raporlar",
         "icon": Icons.bar_chart,
@@ -903,12 +1043,16 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
       },
       {
         "title": "Grup Yönetimi",
+        "subtitle":
+            "Grupları görüntüleyebilir öğrencilerin gruplarını değiştirebiir ve yeni grup ekleyebilirsiniz.",
         "icon": Icons.groups,
         "color": Colors.blue,
         "route": "group",
       },
       {
         "title": "Öğrenci Aktif/Pasif",
+        "subtitle":
+            "Devam eden/etmeyen öğrencileri ayırabilir ve görüntüleyebilirsiniz.",
         "icon": Icons.person_add_disabled,
         "color": Colors.deepOrange,
         "route": "pasifaktif",
@@ -944,6 +1088,13 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
           ),
         );
         break;
+      case "register":
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const AdvancedSignUpPage()),
+        );
+        break;
+
       case "attendance":
         Navigator.push(
           context,
@@ -987,17 +1138,27 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
         );
         break;
       case "training_schedule":
-        final allStudents = await GoogleSheetService.getStudentsOnlyCached();
-        final allGroups = await GoogleSheetService.getGroupsCached();
-        final allRelations = await GoogleSheetService.getGroupStudentsCached();
+        final repo = AppRepository();
+        if (!repo.isLoaded) {
+          await repo.loadAllData();
+        }
+
         if (!context.mounted) return;
         Navigator.push(
           context,
           MaterialPageRoute(
             builder: (_) => WeeklyTrainingScreen(
-              groups: allGroups,
-              relations: allRelations,
-              students: allStudents,
+              groups: repo.allGroups,
+              relations: repo.allGroupStudents,
+              students: repo.allUsers, // Tüm kullanıcılar (koçlar için gerekli)
+              coaches: repo.allCoaches, // Coach listesi
+              onScheduleUpdated: (groupId, newSchedule) async {
+                await GoogleSheetService.updateGroupSchedule(
+                  groupId,
+                  newSchedule,
+                );
+                await repo.refreshTable('groups');
+              },
             ),
           ),
         );
@@ -1007,12 +1168,7 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
           context,
           MaterialPageRoute(builder: (_) => GroupManagementScreen()),
         );
-        break;
-      case "register":
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const AdvancedSignUpPage()),
-        );
+
         break;
       case "reports":
         ScaffoldMessenger.of(context).showSnackBar(

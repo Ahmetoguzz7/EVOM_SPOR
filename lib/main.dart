@@ -1,8 +1,13 @@
-import 'package:EVOM_SPOR/hive_fast_data.dart';
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io' show Platform;
+
+import 'package:EVOM_SPOR/datapage/fetch_data_page.dart';
+import 'package:EVOM_SPOR/core/app_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:EVOM_SPOR/unifiedLoginPage.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -10,61 +15,72 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:intl/intl.dart';
-import 'dart:convert';
-import 'dart:async';
-import 'dart:io' show Platform;
 
-// 🔥 SADECE EKLENEN FIREBASE PAKETLERİ
+// Firebase paketleri
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+
+// Sayfalar
+import 'package:EVOM_SPOR/unifiedLoginPage.dart';
 
 // ============================================================
 // GLOBAL TANIMLAR
 // ============================================================
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
-
-const String GITHUB_USERNAME = "Ahmetoguzz7";
-const String GITHUB_REPO = "EVOM_SPOR";
-
-// Google Apps Script URL (Aynen duruyor)
-const String _baseUrl =
-    "https://script.google.com/macros/s/AKfycbywI2z_lyAX8sYZFxF9Zre-NkzKhHFWYCJykFHZeN_WW4Y4Q27ko3V44S4CZuEC2dW7/exec";
-
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
 
-// Workmanager task isimleri (Aynen duruyor)
+const String GITHUB_USERNAME = "Ahmetoguzz7";
+const String GITHUB_REPO = "EVOM_SPOR";
+const String _baseUrl =
+    "https://script.google.com/macros/s/AKfycby3EW0jopQmtAZf-v_TVW8oNUS7BANs6EuMgAi4bisyz07gtlWqAQtPFIF6eIIf_cTXRg/exec";
+
 const String backgroundUpdateTask = "updateCheckTask";
 const String backgroundNotificationTask = "notificationCheckTask";
 
-// 🔥 FIREBASE ARKA PLAN BİLDİRİM DİNLEYİCİSİ (Uygulama kapalıyken tetiklenir)
+// ============================================================
+// 🔥 FIREBASE ARKA PLAN HANDLER
+// ============================================================
+
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
-  print("🔥 Arka planda Firebase bildirimi alındı: ${message.messageId}");
+
+  if (message.notification != null) {
+    await flutterLocalNotificationsPlugin.show(
+      id: DateTime.now().millisecondsSinceEpoch.remainder(100000),
+      title: message.notification?.title ?? 'Bildirim',
+      body: message.notification?.body ?? '',
+      notificationDetails: NotificationDetails(
+        android: AndroidNotificationDetails(
+          'app_notifications',
+          'Uygulama Bildirimleri',
+          importance: Importance.high,
+          priority: Priority.high,
+        ),
+        iOS: const DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
+        ),
+      ),
+    );
+  }
 }
 
 // ============================================================
-// BACKGROUND TASK CALLBACK (Android WorkManager - Aynen Duruyor)
+// BACKGROUND TASK CALLBACK
 // ============================================================
 
 @pragma('vm:entry-point')
 void callbackDispatcher() {
   Workmanager().executeTask((taskName, inputData) async {
-    print("🔄 Arka plan görevi: $taskName");
-
-    try {
-      if (taskName == backgroundUpdateTask) {
-        await checkForUpdateBackground();
-      } else if (taskName == backgroundNotificationTask) {
-        await checkForNewNotificationsBackground();
-      }
-    } catch (e) {
-      print("❌ Arka plan görevi hatası: $e");
+    if (taskName == backgroundUpdateTask) {
+      await checkForUpdateBackground();
+    } else if (taskName == backgroundNotificationTask) {
+      await checkForNewNotificationsBackground();
     }
-
     return Future.value(true);
   });
 }
@@ -76,98 +92,128 @@ void callbackDispatcher() {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 🔥 SADECE FIREBASE BAŞLATMA ADIMLARI EKLENDİ
-  try {
-    await Firebase.initializeApp();
-    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-
-    // Ön planda bildirimleri yakalamak için dinleyici
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      print(
-        "🔔 Uygulama açıkken Firebase bildirimi geldi: ${message.notification?.title}",
-      );
-      if (message.notification != null) {
-        showAppNotification(
-          id: message.hashCode,
-          title: message.notification!.title ?? 'Bildirim',
-          body: message.notification!.body ?? '',
-        );
-      }
-    });
-
-    // Bildirime tıklanıp uygulama açıldığında tetiklenir
-    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-      navigatorKey.currentState?.pushNamed('/notifications');
-    });
-
-    // Her ihtimale karşı genel duyurular için konuya abone yapalım
-    await FirebaseMessaging.instance.subscribeToTopic("all_users");
-
-    print("🔥 Firebase altyapısı başarıyla eklendi");
-  } catch (e) {
-    print("❌ Firebase başlatılamadı: $e");
-  }
-
-  // Türkçe locale (Aynen duruyor)
+  // Türkçe locale
   try {
     await initializeDateFormatting('tr_TR', null);
-    print("✅ Türkçe locale başlatıldı");
   } catch (e) {
     Intl.defaultLocale = 'tr_TR';
   }
 
-  // İzinler (Aynen duruyor)
+  // Firebase başlat
+  await Firebase.initializeApp();
+
+  // Arka plan handler
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+  // İzinler
   await requestPermissions();
 
-  // Bildirim servisi (Aynen duruyor)
+  // Bildirim servisi
   await initNotifications();
 
-  // Arka plan görevleri (Aynen duruyor)
+  // Firebase ön plan dinleyiciler
+  FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+    if (message.notification != null) {
+      flutterLocalNotificationsPlugin.show(
+        id: message.hashCode,
+        title: message.notification?.title ?? 'Bildirim',
+        body: message.notification?.body ?? '',
+        notificationDetails: NotificationDetails(
+          android: AndroidNotificationDetails(
+            'app_notifications',
+            'Uygulama Bildirimleri',
+            importance: Importance.high,
+          ),
+          iOS: const DarwinNotificationDetails(
+            presentAlert: true,
+            presentBadge: true,
+            presentSound: true,
+          ),
+        ),
+      );
+    }
+  });
+
+  FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+    navigatorKey.currentState?.pushNamed('/notifications');
+  });
+
+  // Token kaydet
+  String? token = await FirebaseMessaging.instance.getToken();
+  if (token != null) {
+    await _saveTokenToServer(token);
+  }
+
+  FirebaseMessaging.instance.onTokenRefresh.listen((newToken) {
+    _saveTokenToServer(newToken);
+  });
+
+  await FirebaseMessaging.instance.subscribeToTopic("all_users");
+
+  // Arka plan görevleri
   await initBackgroundTask();
 
-  runApp(const MyApp());
-
-  // Açılışta güncelleme kontrolü (Aynen duruyor)
+  // Güncelleme kontrolü
   Future.delayed(const Duration(seconds: 3), () {
     checkForUpdateWithNotification();
   });
 
-  // iOS için periyodik kontrol (Aynen duruyor)
   if (Platform.isIOS) {
     _startIOSPeriodicCheck();
   }
+
+  // 🔥 SPLASHSCREEN KALDIRILDI! Doğrudan Login sayfası açılıyor
+  runApp(const MyApp());
 }
 
 // ============================================================
-// iOS PERİYODİK KONTROL (Aynen duruyor)
+// FCM TOKEN KAYDET
+// ============================================================
+Future<void> _saveTokenToServer(String token) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final userJson = prefs.getString('logged_user');
+    if (userJson == null) return;
+
+    final userMap = json.decode(userJson) as Map<String, dynamic>;
+    final userId = userMap['app']?.toString();
+    if (userId == null) return;
+
+    await http
+        .post(
+          Uri.parse(_baseUrl),
+          headers: {'Content-Type': 'application/json'},
+          body: json.encode({
+            'action': 'updateFcmToken',
+            'user_id': userId,
+            'fcm_token': token,
+          }),
+        )
+        .timeout(const Duration(seconds: 10));
+  } catch (e) {}
+}
+
+// ============================================================
+// iOS PERİYODİK KONTROL
 // ============================================================
 
 Timer? _iosPeriodicTimer;
 
 void _startIOSPeriodicCheck() {
-  _iosPeriodicTimer = Timer.periodic(const Duration(minutes: 5), (_) async {
-    print("🍎 iOS periyodik kontrol çalıştı");
+  _iosPeriodicTimer = Timer.periodic(const Duration(minutes: 15), (_) async {
     await checkForNewNotificationsBackground();
   });
-  print("✅ iOS periyodik kontrol başlatıldı (5 dakikada bir)");
 }
 
 // ============================================================
-// İZİN YÖNETİMİ (Aynen duruyor)
+// İZİN YÖNETİMİ
 // ============================================================
 
 Future<void> requestPermissions() async {
-  print("🔐 İzinler isteniyor...");
-
   try {
     final notificationStatus = await Permission.notification.status;
     if (notificationStatus.isDenied) {
-      final status = await Permission.notification.request();
-      print(
-        status.isGranted
-            ? "✅ Bildirim izni verildi"
-            : "❌ Bildirim izni reddedildi",
-      );
+      await Permission.notification.request();
     }
 
     if (Platform.isAndroid) {
@@ -176,26 +222,22 @@ Future<void> requestPermissions() async {
         await Permission.scheduleExactAlarm.request();
       }
     }
-  } catch (e) {
-    print("⚠️ İzin hatası: $e");
-  }
+  } catch (e) {}
 }
 
 // ============================================================
-// BİLDİRİM SERVİSİ (Aynen duruyor)
+// BİLDİRİM SERVİSİ
 // ============================================================
 
 Future<void> initNotifications() async {
   try {
     const AndroidInitializationSettings initAndroid =
         AndroidInitializationSettings('@mipmap/ic_launcher');
-
     const DarwinInitializationSettings initIOS = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
       requestSoundPermission: true,
     );
-
     const InitializationSettings initSettings = InitializationSettings(
       android: initAndroid,
       iOS: initIOS,
@@ -225,8 +267,6 @@ Future<void> initNotifications() async {
           'Güncelleme Bildirimleri',
           description: 'Uygulama güncellemeleri',
           importance: Importance.high,
-          enableVibration: true,
-          playSound: true,
         ),
       );
 
@@ -236,110 +276,47 @@ Future<void> initNotifications() async {
           'Uygulama Bildirimleri',
           description: 'Duyurular, ödemeler, yoklama bildirimleri',
           importance: Importance.high,
-          enableVibration: true,
-          playSound: true,
         ),
       );
     }
-
-    print("✅ Bildirim servisi başlatıldı");
-  } catch (e) {
-    print("❌ Bildirim başlatma hatası: $e");
-  }
+  } catch (e) {}
 }
 
-// Güncelleme bildirimi (Aynen duruyor)
-Future<void> showUpdateNotification({
-  required String title,
-  required String body,
-  required String downloadUrl,
-}) async {
-  try {
-    const AndroidNotificationDetails android = AndroidNotificationDetails(
-      'update_channel',
-      'Güncelleme Bildirimleri',
-      importance: Importance.max,
-      priority: Priority.high,
-      styleInformation: BigTextStyleInformation(''),
-      autoCancel: false,
-    );
+// ============================================================
+// GÜNCELLEME KONTROL FONKSİYONLARI
+// ============================================================
 
-    const DarwinNotificationDetails ios = DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-    );
+Future<void> checkForUpdateBackground() async {
+  final connectivity = await Connectivity().checkConnectivity();
+  if (connectivity == ConnectivityResult.none) return;
 
+  final current = await getCurrentVersion();
+  final latestData = await getLatestReleaseFromGitHub();
+
+  if (latestData != null && isNewerVersion(current, latestData['version'])) {
     await flutterLocalNotificationsPlugin.show(
       id: 0,
-      title: title,
-      body: body,
-      notificationDetails: const NotificationDetails(
-        android: android,
-        iOS: ios,
+      title: "🎉 Yeni Güncelleme Mevcut!",
+      body:
+          "v${latestData['version']} sürümü yayınlandı. Dokunun ve güncelleyin!",
+      notificationDetails: NotificationDetails(
+        android: AndroidNotificationDetails(
+          'update_channel',
+          'Güncelleme Bildirimleri',
+          importance: Importance.max,
+        ),
+        iOS: const DarwinNotificationDetails(),
       ),
-      payload: downloadUrl,
+      payload: latestData['downloadUrl'],
     );
-  } catch (e) {
-    print("❌ Güncelleme bildirimi hatası: $e");
   }
 }
-
-// Uygulama içi bildirim (Aynen duruyor)
-Future<void> showAppNotification({
-  required int id,
-  required String title,
-  required String body,
-  String payload = 'open_notifications',
-}) async {
-  try {
-    const AndroidNotificationDetails android = AndroidNotificationDetails(
-      'app_notifications',
-      'Uygulama Bildirimleri',
-      importance: Importance.high,
-      priority: Priority.high,
-      styleInformation: BigTextStyleInformation(''),
-      autoCancel: true,
-    );
-
-    const DarwinNotificationDetails ios = DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-    );
-
-    await flutterLocalNotificationsPlugin.show(
-      id: id,
-      title: title,
-      body: body,
-      notificationDetails: NotificationDetails(android: android, iOS: ios),
-      payload: payload,
-    );
-
-    print("✅ Bildirim gösterildi: $title");
-  } catch (e) {
-    print("❌ Bildirim hatası: $e");
-  }
-}
-
-Future<void> showSimpleNotification(String title, String body) async {
-  await showAppNotification(id: 99, title: title, body: body);
-}
-
-// ============================================================
-// YENİ BİLDİRİM KONTROLÜ (Google Sheets Polling - Aynen Duruyor)
-// ============================================================
 
 Future<void> checkForNewNotificationsBackground() async {
-  print("🔔 Yeni bildirim kontrolü başladı...");
-
   try {
     final prefs = await SharedPreferences.getInstance();
     final userJson = prefs.getString('logged_user');
-    if (userJson == null) {
-      print("⚠️ Kullanıcı giriş yapmamış, atlandı");
-      return;
-    }
+    if (userJson == null) return;
 
     final userMap = json.decode(userJson) as Map<String, dynamic>;
     final userId = userMap['app']?.toString();
@@ -354,7 +331,6 @@ Future<void> checkForNewNotificationsBackground() async {
     final response = await http
         .get(Uri.parse("$_baseUrl?sheet=notifications"))
         .timeout(const Duration(seconds: 15));
-
     if (response.statusCode != 200) return;
 
     final decoded = json.decode(response.body);
@@ -375,8 +351,6 @@ Future<void> checkForNewNotificationsBackground() async {
       final sentAt = _parseDateTime(sentAtStr);
       return sentAt.isAfter(lastCheck);
     }).toList();
-
-    print("📊 Yeni bildirim sayısı: ${newNotifications.length}");
 
     if (newNotifications.isNotEmpty) {
       if (newNotifications.length == 1) {
@@ -399,61 +373,21 @@ Future<void> checkForNewNotificationsBackground() async {
       'last_notification_check',
       DateTime.now().toIso8601String(),
     );
-  } catch (e) {
-    print("❌ Bildirim kontrolü hatası: $e");
-  }
+  } catch (e) {}
 }
 
 DateTime _parseDateTime(String dateTimeStr) {
   try {
     if (dateTimeStr.contains('T')) return DateTime.parse(dateTimeStr);
-    if (dateTimeStr.contains(' ')) {
+    if (dateTimeStr.contains(' '))
       return DateTime.parse(dateTimeStr.replaceAll(' ', 'T'));
-    }
     return DateTime(2000);
   } catch (_) {
     return DateTime(2000);
   }
 }
 
-// ============================================================
-// ARKA PLAN GÖREVİ BAŞLATMA (Workmanager - Aynen Duruyor)
-// ============================================================
-
-Future<void> initBackgroundTask() async {
-  if (!Platform.isAndroid) return;
-
-  try {
-    await Workmanager().initialize(callbackDispatcher, isInDebugMode: false);
-
-    await Workmanager().registerPeriodicTask(
-      "updateCheckPeriodic",
-      backgroundUpdateTask,
-      frequency: const Duration(hours: 12),
-      constraints: Constraints(
-        networkType: NetworkType.connected,
-        requiresBatteryNotLow: true,
-      ),
-    );
-
-    await Workmanager().registerPeriodicTask(
-      "notificationCheckPeriodic",
-      backgroundNotificationTask,
-      frequency: const Duration(minutes: 15),
-      constraints: Constraints(networkType: NetworkType.connected),
-    );
-
-    print("✅ Android arka plan görevleri başlatıldı");
-  } catch (e) {
-    print("⚠️ Arka plan görevi hatası: $e");
-  }
-}
-
-// ============================================================
-// GÜNCELLEME KONTROLÜ (GitHub - Aynen Duruyor)
-// ============================================================
-
-Future<void> checkForUpdateBackground() async {
+Future<void> checkForUpdateWithNotification() async {
   final connectivity = await Connectivity().checkConnectivity();
   if (connectivity == ConnectivityResult.none) return;
 
@@ -461,13 +395,43 @@ Future<void> checkForUpdateBackground() async {
   final latestData = await getLatestReleaseFromGitHub();
 
   if (latestData != null && isNewerVersion(current, latestData['version'])) {
-    await showUpdateNotification(
-      title: "🎉 Yeni Güncelleme Mevcut!",
-      body:
-          "v${latestData['version']} sürümü yayınlandı. Dokunun ve güncelleyin!",
-      downloadUrl: latestData['downloadUrl'],
+    navigatorKey.currentState?.pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) => ForceUpdateScreen(updateData: latestData),
+      ),
+      (route) => false,
     );
   }
+}
+
+Future<void> showAppNotification({
+  required int id,
+  required String title,
+  required String body,
+  String payload = 'open_notifications',
+}) async {
+  try {
+    const AndroidNotificationDetails android = AndroidNotificationDetails(
+      'app_notifications',
+      'Uygulama Bildirimleri',
+      importance: Importance.high,
+      priority: Priority.high,
+      autoCancel: true,
+    );
+    const DarwinNotificationDetails ios = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+
+    await flutterLocalNotificationsPlugin.show(
+      id: id,
+      title: title,
+      body: body,
+      notificationDetails: NotificationDetails(android: android, iOS: ios),
+      payload: payload,
+    );
+  } catch (e) {}
 }
 
 Future<String> getCurrentVersion() async {
@@ -484,7 +448,6 @@ Future<Map<String, dynamic>?> getLatestReleaseFromGitHub() async {
     final url = Uri.parse(
       "https://api.github.com/repos/$GITHUB_USERNAME/$GITHUB_REPO/releases/latest",
     );
-
     final response = await http
         .get(url, headers: {'Accept': 'application/vnd.github.v3+json'})
         .timeout(const Duration(seconds: 10));
@@ -492,7 +455,6 @@ Future<Map<String, dynamic>?> getLatestReleaseFromGitHub() async {
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       final assets = data['assets'] as List;
-
       final apkAsset = assets.firstWhere(
         (asset) => asset['name'].toString().endsWith('.apk'),
         orElse: () => null,
@@ -503,7 +465,6 @@ Future<Map<String, dynamic>?> getLatestReleaseFromGitHub() async {
           RegExp(r'[^0-9.]'),
           '',
         );
-
         return {
           'version': version,
           'downloadUrl': apkAsset['browser_download_url'],
@@ -511,16 +472,13 @@ Future<Map<String, dynamic>?> getLatestReleaseFromGitHub() async {
         };
       }
     }
-  } catch (e) {
-    print("❌ GitHub kontrolü hatası: $e");
-  }
+  } catch (e) {}
   return null;
 }
 
 bool isNewerVersion(String current, String latest) {
   List<int> parse(String v) =>
       v.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-
   final v1 = parse(current);
   final v2 = parse(latest);
 
@@ -532,123 +490,132 @@ bool isNewerVersion(String current, String latest) {
   return false;
 }
 
-Future<void> checkForUpdateWithNotification() async {
-  final connectivity = await Connectivity().checkConnectivity();
-  if (connectivity == ConnectivityResult.none) return;
-
-  final current = await getCurrentVersion();
-  final latestData = await getLatestReleaseFromGitHub();
-
-  if (latestData != null && isNewerVersion(current, latestData['version'])) {
-    String releaseNotes = latestData['releaseNotes'];
-    String shortNotes = releaseNotes.length > 50
-        ? "${releaseNotes.substring(0, 50)}..."
-        : releaseNotes;
-
-    await showUpdateNotification(
-      title: "🎉 Zorunlu Güncelleme Mevcut!",
-      body: "v${latestData['version']}: $shortNotes",
-      downloadUrl: latestData['downloadUrl'],
-    );
-
-    final context = navigatorKey.currentContext;
-    if (context != null) {
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(
-          builder: (_) => ForceUpdateScreen(updateData: latestData),
-        ),
-        (route) => false,
-      );
-    }
-  }
-}
-
-void showUpdateDialog(BuildContext context, Map<String, dynamic> release) {
-  showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (context) => AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      title: const Row(
-        children: [
-          Icon(Icons.system_update, color: Colors.indigo),
-          SizedBox(width: 10),
-          Text("Yeni Sürüm Mevcut! 🚀"),
-        ],
-      ),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Colors.indigo.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Text(
-              "Sürüm: v${release['version']}",
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-            ),
-          ),
-          const SizedBox(height: 15),
-          const Text(
-            "✨ Yenilikler:",
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-          ),
-          const SizedBox(height: 5),
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Colors.grey.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Text(
-              release['releaseNotes'],
-              style: const TextStyle(fontSize: 13),
-            ),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text("Sonra"),
-        ),
-        ElevatedButton.icon(
-          onPressed: () {
-            Navigator.pop(context);
-            downloadAndInstallApk(release['downloadUrl']);
-          },
-          icon: const Icon(Icons.download),
-          label: const Text("Hemen Güncelle"),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.indigo,
-            foregroundColor: Colors.white,
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
 Future<void> downloadAndInstallApk(String url) async {
-  final Uri uri = Uri.parse(url);
   try {
+    final uri = Uri.parse(url);
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
-      await showSimpleNotification(
-        "İndirme Başladı",
-        "APK dosyası indiriliyor, kurulum için dosyaya dokunun",
-      );
     }
-  } catch (e) {
-    print("❌ İndirme hatası: $e");
+  } catch (e) {}
+}
+
+Future<void> initBackgroundTask() async {
+  if (!Platform.isAndroid) return;
+
+  try {
+    await Workmanager().initialize(callbackDispatcher, isInDebugMode: false);
+    await Workmanager().registerPeriodicTask(
+      "updateCheckPeriodic",
+      backgroundUpdateTask,
+      frequency: const Duration(hours: 12),
+      constraints: Constraints(
+        networkType: NetworkType.connected,
+        requiresBatteryNotLow: true,
+      ),
+    );
+    await Workmanager().registerPeriodicTask(
+      "notificationCheckPeriodic",
+      backgroundNotificationTask,
+      frequency: const Duration(minutes: 15),
+      constraints: Constraints(networkType: NetworkType.connected),
+    );
+  } catch (e) {}
+}
+
+// ============================================================
+// FORCE UPDATE SCREEN
+// ============================================================
+
+class ForceUpdateScreen extends StatelessWidget {
+  final Map<String, dynamic> updateData;
+  const ForceUpdateScreen({super.key, required this.updateData});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0F172A),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 100,
+                height: 100,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Colors.orange.shade600, Colors.red.shade600],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.system_update_alt,
+                  size: 50,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 32),
+              const Text(
+                "Yeni Güncelleme Mevcut!",
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                "v${updateData['version']} sürümü yayınlandı.",
+                style: const TextStyle(color: Colors.white70, fontSize: 16),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Text(
+                  updateData['releaseNotes'] ??
+                      'Yeni özellikler ve hata düzeltmeleri',
+                  style: const TextStyle(color: Colors.white70, fontSize: 14),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(height: 32),
+              SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: ElevatedButton(
+                  onPressed: () async {
+                    final url = updateData['downloadUrl'];
+                    if (url != null) await downloadAndInstallApk(url);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  child: const Text(
+                    "Güncelle",
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
 // ============================================================
-// APP (Aynen duruyor)
+// 🔥 MY APP - SPLASHSCREEN YOK! DOĞRUDAN LOGİN
 // ============================================================
 
 class MyApp extends StatelessWidget {
@@ -664,19 +631,24 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
         useMaterial3: true,
       ),
-      home: const UnifiedLoginPage(),
+      home: const UnifiedLoginPage(), // 🔥 SPLASHSCREEN YOK! DOĞRUDAN LOGİN
+      routes: {'/notifications': (context) => const NotificationsPage()},
     );
   }
 }
 
-// Zorunlu Güncelleme Ekranı (Hata vermemesi için bırakıldı)
-class ForceUpdateScreen extends StatelessWidget {
-  final Map<String, dynamic> updateData;
-  const ForceUpdateScreen({super.key, required this.updateData});
+// ============================================================
+// NOTIFICATIONS PAGE (BASİT)
+// ============================================================
+
+class NotificationsPage extends StatelessWidget {
+  const NotificationsPage({super.key});
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Center(child: Text("Lütfen güncelleyin v${updateData['version']}")),
+      appBar: AppBar(title: const Text("Bildirimler")),
+      body: const Center(child: Text("Bildirim listesi")),
     );
   }
 }

@@ -4,9 +4,8 @@ import 'dart:convert';
 import 'package:EVOM_SPOR/datapage/data_page/data.dart';
 import 'package:EVOM_SPOR/local/local_db.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
+import 'package:crypto/crypto.dart';
 import 'dart:io';
-import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
 
 // =========================================================================
@@ -28,17 +27,11 @@ class DataCache {
   final Map<String, _CacheItem> _cache = {};
   final Map<String, Future> _pendingFetches = {};
 
-  // Cache süreleri (saniye)
-  static const int CACHE_LONG = 3600; // 1 saat (şubeler, sporlar)
-  static const int CACHE_MEDIUM = 300; // 5 dakika (gruplar, öğrenciler)
-  static const int CACHE_SHORT = 60; // 1 dakika (yoklamalar, ödemeler)
-  static const int CACHE_VERY_SHORT = 30; // 30 saniye (bildirimler)
+  static const int CACHE_LONG = 3600;
+  static const int CACHE_MEDIUM = 300;
+  static const int CACHE_SHORT = 60;
+  static const int CACHE_VERY_SHORT = 30;
 
-  // =========================================================================
-  // 💾 DİSK CACHE - KALICI DEPOLAMA
-  // =========================================================================
-
-  /// Veriyi SharedPreferences'a yaz (uygulama kapansa bile kalır)
   Future<void> persistToDisk(String key, dynamic data) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -47,13 +40,11 @@ class DataCache {
         'cache_${key}_time',
         DateTime.now().toIso8601String(),
       );
-      // print("💾 DISK WRITE: $key");
     } catch (e) {
-      print("❌ Disk yazma hatası ($key): $e");
+      // Disk yazma hatası
     }
   }
 
-  /// Diskten oku — TTL geçmişse null döner
   Future<dynamic> loadFromDisk(
     String key, {
     int ttlSeconds = CACHE_MEDIUM,
@@ -65,35 +56,27 @@ class DataCache {
 
       final savedTime = DateTime.parse(timeStr);
       if (DateTime.now().difference(savedTime).inSeconds > ttlSeconds) {
-        // print("⏰ DISK EXPIRED: $key");
         return null;
       }
 
       final raw = prefs.getString('cache_$key');
       if (raw == null) return null;
 
-      // print("💾 DISK READ: $key");
       return jsonDecode(raw);
     } catch (e) {
-      print("❌ Disk okuma hatası ($key): $e");
       return null;
     }
   }
 
-  /// Diskten belirli bir key'i sil
   Future<void> removeFromDisk(String key) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('cache_$key');
       await prefs.remove('cache_${key}_time');
     } catch (e) {
-      print("❌ Disk silme hatası ($key): $e");
+      // Disk silme hatası
     }
   }
-
-  // =========================================================================
-  // ⚡ ANA CACHE MANTIĞI (RAM önce, sonra Disk, sonra API)
-  // =========================================================================
 
   Future<T> getOrFetch<T>(
     String key,
@@ -101,57 +84,37 @@ class DataCache {
     int ttlSeconds = CACHE_MEDIUM,
     bool forceRefresh = false,
   }) async {
-    // Force refresh → her iki cache'i de temizle
     if (forceRefresh) {
       _cache.remove(key);
       await removeFromDisk(key);
     }
 
-    // 1️⃣ RAM cache'de var mı? (en hızlı)
     final cached = _cache[key];
     if (cached != null && !cached.isExpired) {
-      print("⚡ RAM HIT: $key");
       return cached.data as T;
     }
 
-    // 2️⃣ Disk cache'de var mı? (uygulama yeni açıldıysa)
     final diskData = await loadFromDisk(key, ttlSeconds: ttlSeconds);
     if (diskData != null) {
-      print("💾 DISK HIT: $key");
-      try {
-        // Disk her zaman raw List<dynamic> döner — direkt cache'e yaz
-        _cache[key] = _CacheItem(
-          data: diskData,
-          expiry: DateTime.now().add(Duration(seconds: ttlSeconds)),
-        );
-        return diskData as T;
-      } catch (e) {
-        // Cast olmadıysa disk cache'i temizle, API'den çek
-        print("⚠️ Disk cast hatası, API'den çekiliyor: $e");
-        await removeFromDisk(key);
-      }
+      _cache[key] = _CacheItem(
+        data: diskData,
+        expiry: DateTime.now().add(Duration(seconds: ttlSeconds)),
+      );
+      return diskData as T;
     }
 
-    // 3️⃣ API'den çek
-    print("🌐 API FETCH: $key");
-
-    // Aynı anda birden fazla istek varsa bekle (duplicate request önleme)
     if (_pendingFetches.containsKey(key)) {
-      print("⏳ BEKLE: $key - Zaten yükleniyor");
       return _pendingFetches[key] as Future<T>;
     }
 
     final future = fetcher()
         .then((value) async {
-          // RAM'e yaz
           _cache[key] = _CacheItem(
             data: value,
             expiry: DateTime.now().add(Duration(seconds: ttlSeconds)),
           );
-          // Diske yaz (arka planda, await yok — UI'ı bloklamasın)
           persistToDisk(key, value);
           _pendingFetches.remove(key);
-          print("✅ CACHE SET: $key (${ttlSeconds}s)");
           return value;
         })
         .catchError((e) {
@@ -163,18 +126,14 @@ class DataCache {
     return future;
   }
 
-  // =========================================================================
-  // 🗑️ CACHE TEMİZLEME
-  // =========================================================================
-
   void invalidate(String key) {
     _cache.remove(key);
-    removeFromDisk(key); // Diskten de sil
+    removeFromDisk(key);
   }
 
   void invalidateAll() {
     _cache.clear();
-    _clearAllDiskCache(); // Tüm disk cache'ini temizle
+    _clearAllDiskCache();
   }
 
   void invalidateTable(String tableName) {
@@ -202,9 +161,8 @@ class DataCache {
       for (var key in keys) {
         await prefs.remove(key);
       }
-      print("🗑️ Tüm disk cache temizlendi (${keys.length} adet)");
     } catch (e) {
-      print("❌ Disk cache temizleme hatası: $e");
+      // Disk cache temizleme hatası
     }
   }
 }
@@ -213,16 +171,14 @@ class GoogleSheetService {
   static final DataCache _cache = DataCache();
 
   static const String _baseUrl =
-      "https://script.google.com/macros/s/AKfycbywI2z_lyAX8sYZFxF9Zre-NkzKhHFWYCJykFHZeN_WW4Y4Q27ko3V44S4CZuEC2dW7/exec";
+      "https://script.google.com/macros/s/AKfycby3EW0jopQmtAZf-v_TVW8oNUS7BANs6EuMgAi4bisyz07gtlWqAQtPFIF6eIIf_cTXRg/exec";
 
   // =========================================================================
-  // 🔥 MERKEZİ POST FONKSİYONU (302 YÖNLENDİRMESİNİ OTOMATİK ÇÖZER)
+  // 🔥 MERKEZİ POST FONKSİYONU
   // =========================================================================
   static Future<http.Response?> _postRequest(
     Map<String, dynamic> bodyData,
   ) async {
-    print("📡 POST isteği: ${bodyData['action']}");
-
     try {
       var response = await http.post(
         Uri.parse(_baseUrl),
@@ -230,12 +186,8 @@ class GoogleSheetService {
         body: jsonEncode(bodyData),
       );
 
-      print("📡 Response status: ${response.statusCode}");
-      print("📡 Response body: ${response.body}");
-
       if (response.statusCode == 302) {
         String? redirectUrl = response.headers['location'];
-        print("📡 302 Redirect: $redirectUrl");
 
         if (redirectUrl == null && response.body.contains('HREF="')) {
           final start = response.body.indexOf('HREF="') + 6;
@@ -247,13 +199,11 @@ class GoogleSheetService {
 
         if (redirectUrl != null) {
           response = await http.get(Uri.parse(redirectUrl));
-          print("📡 Redirect response status: ${response.statusCode}");
         }
       }
 
       return response;
     } catch (e) {
-      print("❌ POST İstek Hatası: $e");
       return null;
     }
   }
@@ -301,7 +251,7 @@ class GoogleSheetService {
   }
 
   // =========================================================================
-  // ✅ TEMEL OKUMA FONKSİYONU (GET)
+  // ✅ TEMEL OKUMA FONKSİYONU
   // =========================================================================
   static Future<List<dynamic>> fetchTable(String sheetName) async {
     try {
@@ -410,56 +360,32 @@ class GoogleSheetService {
     );
     return rawData.map((item) => Sports.fromJson(item)).toList();
   }
-  /*
-  static Future<List<Coach>> getCoachesCached({
-    bool forceRefresh = false,
-  }) async {
-    final rawData = await fetchTableCached(
-      'coaches',
-      forceRefresh: forceRefresh,
-    );
-    return rawData.map((item) => Coach.fromJson(item)).toList();
-  }
-*/
-  // fetch_data_page.dart içinde
 
   static Future<List<Coach>> getCoachesCached({
     bool forceRefresh = false,
   }) async {
     try {
-      print("🔍 getCoachesCached çağrıldı - forceRefresh: $forceRefresh");
-
-      // Coach tablosundan veri çek (coaches, users DEĞİL!)
       final rawData = await fetchTableCached(
-        'coaches', // 🔥 DİKKAT: 'coaches' olmalı, 'users' değil!
+        'coaches',
         forceRefresh: forceRefresh,
       );
-
-      print("📊 getCoachesCached - ham veri sayısı: ${rawData.length}");
 
       if (rawData.isEmpty) {
         return [];
       }
 
-      // Güvenli dönüşüm
       final List<Coach> coaches = [];
       for (var item in rawData) {
         try {
           if (item is Map<String, dynamic>) {
             coaches.add(Coach.fromJson(item));
-          } else {
-            print("⚠️ Beklenmeyen veri tipi: ${item.runtimeType}");
           }
         } catch (e) {
-          print("❌ Coach dönüşüm hatası: $e, item: $item");
+          // Dönüşüm hatası
         }
       }
-
-      print("✅ Coach sayısı: ${coaches.length}");
       return coaches;
-    } catch (e, stackTrace) {
-      print("❌ getCoachesCached hatası: $e");
-      print(stackTrace);
+    } catch (e) {
       return [];
     }
   }
@@ -486,7 +412,7 @@ class GoogleSheetService {
   }
 
   // =========================================================================
-  // ✅ ORİJİNAL GET METODLARI (CACHE'SİZ - GERİYE DÖNÜK UYUMLULUK)
+  // ✅ ORİJİNAL GET METODLARI (CACHE'SİZ)
   // =========================================================================
 
   static Future<List<Users>> getUsers() async {
@@ -604,7 +530,10 @@ class GoogleSheetService {
   // ✅ BİLDİRİM İŞLEMLERİ
   // =========================================================================
 
-  static Future<List<Notifications>> getNotifications({required userId}) async {
+  static Future<List<Notifications>> getNotifications({
+    required String userId,
+    required bool forceRefresh,
+  }) async {
     try {
       final response = await http.get(
         Uri.parse('$_baseUrl?sheet=notifications'),
@@ -643,54 +572,274 @@ class GoogleSheetService {
     String userId,
   ) async {
     try {
+      // 1. Bildirimler tablosunu RAM veya Disk Cache'den getiriyoruz
       final rawData = await fetchTableCached(
         'notifications',
-        forceRefresh: true,
+        forceRefresh: false,
       );
       if (rawData.isEmpty) return [];
 
-      print("========== GET NOTIFICATIONS (BASİT) ==========");
-      print("Kullanıcı ID: '$userId'");
+      final String currentUserIdStr = userId.toString().trim();
 
-      final String userIdStr = userId.toString().trim();
+      // 2. RAM Cache'den diğer ilişkili tabloları çekiyoruz
+      final allGroupStudents = await getGroupStudentsCached();
+      final allGroups = await getGroupsCached();
+      final allUsers = await getUsersCached();
+      final allCoaches = await getCoachesCached();
 
-      List<Map<String, dynamic>> notifications = [];
-
-      for (var item in rawData) {
-        String recipientId = item['recipient_id']?.toString().trim() ?? '';
-        String title = item['title']?.toString() ?? '';
-
-        if (recipientId == 'all' || recipientId == userIdStr) {
-          print("✅ EKLENDI: $title (recipient_id: $recipientId)");
-          notifications.add(Map<String, dynamic>.from(item));
-        } else {
-          print(
-            "❌ EKLENMEDI: $title (recipient_id: $recipientId != $userIdStr)",
-          );
+      // Kullanıcının sistemdeki rolünü bulalım
+      String userRole = '';
+      for (var user in allUsers) {
+        if (user.app.toString().trim() == currentUserIdStr) {
+          userRole = user.role.toLowerCase().trim();
+          break;
         }
       }
 
-      notifications.sort((a, b) {
+      final bool isStudent = (userRole == 'student' || userRole == 'öğrenci');
+      final bool isCoach = (userRole == 'coach' || userRole == 'antrenör');
+      final bool isAdmin = (userRole == 'admin' || userRole == 'manager');
+
+      // Kullanıcının (Öğrenci veya Hocanın) dahil olduğu/yönettiği GRUP ID'leri
+      final Set<String> userGroupIds = {};
+
+      print("📊 Kullanıcı Bilgisi - ID: $currentUserIdStr, Rol: $userRole");
+
+      if (isStudent) {
+        // Öğrenci ise: Aktif olduğu grupları Set'e ekle
+        for (var gs in allGroupStudents) {
+          if (gs.student_id.toString().trim() == currentUserIdStr &&
+              gs.is_active.toUpperCase() == "TRUE") {
+            userGroupIds.add(gs.groups_id.toString().trim());
+          }
+        }
+        print("📚 Öğrenci grupları: $userGroupIds");
+      } else if (isCoach) {
+        // Antrenör ise: Önce coaches tablosundaki coach_id karşılığını bulalım
+        String myCoachId = currentUserIdStr;
+        try {
+          final myCoachMeta = allCoaches.firstWhere(
+            (c) => c.user_id.toString().trim() == currentUserIdStr,
+          );
+          myCoachId = myCoachMeta.coach_id.toString().trim();
+        } catch (_) {
+          print(
+            "⚠️ Coach kaydı bulunamadı, user_id kullanılıyor: $currentUserIdStr",
+          );
+        }
+
+        // Hoca bu gruplardan birinin başındaysa, o grubun ID'sini listesine ekle
+        for (var group in allGroups) {
+          final gCoach = group.coach_id.toString().trim();
+          if (gCoach == currentUserIdStr || gCoach == myCoachId) {
+            userGroupIds.add(group.groups_id.toString().trim());
+          }
+        }
+        print("📚 Antrenör grupları: $userGroupIds");
+      } else if (isAdmin) {
+        // Admin tüm grupları görebilir
+        for (var group in allGroups) {
+          userGroupIds.add(group.groups_id.toString().trim());
+        }
+        print("👑 Admin - Tüm gruplar: ${userGroupIds.length} grup");
+      }
+
+      // 3. Bildirimleri süzme aşaması (DETAYLI LOGLAMA İLE)
+      List<Map<String, dynamic>> filteredNotifications = [];
+
+      print("📬 Toplam bildirim sayısı: ${rawData.length}");
+
+      for (var item in rawData) {
+        final String rId = item['recipient_id']?.toString().trim() ?? '';
+        final String gId = item['groups_id']?.toString().trim() ?? '';
+        final String sId = item['sender_id']?.toString().trim() ?? '';
+        final String title = item['title']?.toString() ?? '';
+
+        bool isTarget = false;
+        String reason = "";
+
+        // 🎯 SENARYO 1: GENEL DUYURU (all)
+        if (rId.toLowerCase() == 'all' || rId.toLowerCase() == 'tümü') {
+          isTarget = true;
+          reason = "GENEL DUYURU (all)";
+        }
+        // 🎯 SENARYO 2: KİŞİYE ÖZEL BİREYSEL DUYURU
+        else if (rId == currentUserIdStr) {
+          isTarget = true;
+          reason = "KİŞİYE ÖZEL (recipient_id eşleşmesi)";
+        }
+        // 🎯 SENARYO 3: GRUBA ÖZEL DUYURU (groups_id dolu ve kullanıcının grubuyla eşleşiyor)
+        else if (gId.isNotEmpty && gId != 'null' && gId != '0') {
+          if (userGroupIds.contains(gId)) {
+            isTarget = true;
+            reason = "GRUBA ÖZEL (groups_id: $gId, kullanıcının grubu)";
+          } else {
+            reason =
+                "GRUBA ÖZEL ama kullanıcının grubu değil (gId: $gId, userGroups: $userGroupIds)";
+          }
+        }
+        // 🎯 SENARYO 4: recipient_id "group" olarak gelmiş (manager panelinden grup seçilerek atılmış)
+        else if (rId.toLowerCase() == 'group') {
+          if (gId.isNotEmpty &&
+              gId != 'null' &&
+              gId != '0' &&
+              userGroupIds.contains(gId)) {
+            isTarget = true;
+            reason = "GRUBA ÖZEL (recipient=group, groups_id: $gId)";
+          } else {
+            reason =
+                "GRUBA ÖZEL ama groups_id geçersiz veya kullanıcının grubu değil";
+          }
+        }
+
+        // Detaylı log (sadece debug için, isteğe bağlı kaldırabilirsin)
+        if (isTarget) {
+          print("   ✅ [${reason}] $title");
+        }
+
+        if (isTarget) {
+          filteredNotifications.add(Map<String, dynamic>.from(item));
+        }
+      }
+
+      // 4. Tarihe göre yeniden eskiye sıralama
+      filteredNotifications.sort((a, b) {
         DateTime dateA = _parseDateTime(a['sent_at']?.toString() ?? '');
         DateTime dateB = _parseDateTime(b['sent_at']?.toString() ?? '');
         return dateB.compareTo(dateA);
       });
 
-      print("📊 Filtrelenmiş duyuru sayısı: ${notifications.length}");
-      return notifications;
-    } catch (e) {
-      print("Bildirimler alınamadı: $e");
+      print("📬 Filtrelenmiş bildirim sayısı: ${filteredNotifications.length}");
+
+      return filteredNotifications;
+    } catch (e, stackTrace) {
+      print("❌ getNotificationsForUser Filtreleme Hatası: $e");
+      print(stackTrace);
       return [];
     }
   }
+
+  // 🔥 YARDIMCI FONKSİYON: Kullanıcının gruplarını bul
+  static Future<List<String>> _getUserGroups(String userId) async {
+    List<String> groups = [];
+
+    try {
+      final allGroupStudents = await getGroupStudentsCached();
+      final allGroups = await getGroupsCached();
+      final allUsers = await getUsersCached();
+
+      // Kullanıcının rolünü bul
+      String role = '';
+      for (var user in allUsers) {
+        if (user.app.toString() == userId) {
+          role = user.role.toLowerCase();
+          break;
+        }
+      }
+
+      final isStudent = (role == 'student' || role == 'öğrenci');
+      final isCoach = (role == 'coach' || role == 'antrenör');
+
+      if (isStudent) {
+        // ÖĞRENCİ: Bağlı olduğu gruplar
+        for (var gs in allGroupStudents) {
+          if (gs.student_id == userId && gs.is_active.toUpperCase() == "TRUE") {
+            groups.add(gs.groups_id);
+          }
+        }
+      } else if (isCoach) {
+        // ANTRENÖR: Yönettiği gruplar
+        for (var group in allGroups) {
+          if (group.coach_id == userId) {
+            groups.add(group.groups_id);
+          }
+        }
+      }
+
+      print("📚 Kullanıcı $userId için gruplar: $groups");
+    } catch (e) {
+      print("❌ _getUserGroups hatası: $e");
+    }
+
+    return groups;
+  }
+
+  // 🔥 YARDIMCI FONKSİYONLAR (GoogleSheetService içine ekle)
+
+  static Future<Map<String, dynamic>> _getUserRoleAndGroups(
+    String userId,
+  ) async {
+    try {
+      final allUsers = await getUsersCached();
+      final allGroupStudents = await getGroupStudentsCached();
+      final allGroups = await getGroupsCached();
+
+      String role = '';
+      bool isStudent = false;
+      bool isCoach = false;
+      List<String> groupIds = [];
+
+      // Kullanıcı rolünü bul
+      for (var user in allUsers) {
+        if (user.app.toString() == userId) {
+          role = user.role.toLowerCase();
+          isStudent = (role == 'student' || role == 'öğrenci');
+          isCoach = (role == 'coach' || role == 'antrenör');
+          break;
+        }
+      }
+
+      // Öğrenciyse gruplarını bul
+      if (isStudent) {
+        for (var gs in allGroupStudents) {
+          if (gs.student_id == userId && gs.is_active.toUpperCase() == "TRUE") {
+            groupIds.add(gs.groups_id);
+          }
+        }
+      }
+
+      // Antrenörse gruplarını bul
+      if (isCoach) {
+        for (var group in allGroups) {
+          if (group.coach_id == userId) {
+            groupIds.add(group.groups_id);
+          }
+        }
+      }
+
+      return {
+        'role': role,
+        'isStudent': isStudent,
+        'isCoach': isCoach,
+        'groupIds': groupIds,
+      };
+    } catch (e) {
+      print("_getUserRoleAndGroups hatası: $e");
+      return {'role': '', 'isStudent': false, 'isCoach': false, 'groupIds': []};
+    }
+  }
+
+  static Future<String> _getGroupCoach(String groupId) async {
+    try {
+      final allGroups = await getGroupsCached();
+      for (var group in allGroups) {
+        if (group.groups_id == groupId) {
+          return group.coach_id;
+        }
+      }
+      return '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  // Mevcut _parseDateTime fonksiyonunu kullan (zaten var)
 
   static Future<void> markNotificationAsRead(
     String notificationId,
     String userId,
   ) async {
     try {
-      print("📢 Bildirim okunuyor - ID: $notificationId");
-
       final response = await _postRequest({
         "action": "updateNotification",
         "notifications_id": notificationId,
@@ -700,16 +849,11 @@ class GoogleSheetService {
       if (response != null && response.statusCode == 200) {
         final decoded = jsonDecode(response.body);
         if (decoded['success'] == true) {
-          print("✅ Bildirim okundu olarak işaretlendi: $notificationId");
           invalidateCache('notifications');
-        } else {
-          print("❌ Bildirim güncellenemedi: ${decoded['error']}");
         }
-      } else {
-        print("❌ HTTP Hatası: ${response?.statusCode}");
       }
     } catch (e) {
-      print("Okundu işaretlenemedi: $e");
+      // Hata
     }
   }
 
@@ -719,19 +863,12 @@ class GoogleSheetService {
       String isRead = n['is_read']?.toString().toUpperCase() ?? '';
       return isRead != 'TRUE';
     }).length;
-
-    print("📊 Okunmamış bildirim sayısı: $unreadCount");
     return unreadCount;
   }
 
   static Future<bool> addNotification(
     Map<String, dynamic> notificationData,
   ) async {
-    print("📢 addNotification çağrıldı");
-    print("   title: ${notificationData['title']}");
-    print("   recipient_id: ${notificationData['recipient_id']}");
-    print("   groups_id: ${notificationData['groups_id']}");
-
     if (notificationData['groups_id'] != null) {
       notificationData['groups_id'] = notificationData['groups_id'].toString();
     }
@@ -747,14 +884,10 @@ class GoogleSheetService {
         final decoded = jsonDecode(response.body);
         final success = decoded['success'] == true;
         if (success) {
-          print("✅ Bildirim başarıyla eklendi");
           invalidateCache('notifications');
-        } else {
-          print("❌ Bildirim eklenemedi: ${decoded['error']}");
         }
         return success;
       } catch (e) {
-        print("❌ JSON parse hatası: $e");
         return false;
       }
     }
@@ -807,73 +940,60 @@ class GoogleSheetService {
       if (response != null && response.statusCode == 200) {
         final decoded = jsonDecode(response.body);
         if (decoded['success'] == true) {
-          print("✅ Son giriş güncellendi: $userId");
           invalidateCache('users');
-        } else {
-          print("❌ Son giriş güncellenemedi: ${decoded['error']}");
         }
-      } else {
-        print("❌ HTTP Hatası: ${response?.statusCode}");
       }
     } catch (e) {
-      print("Güncelleme hatası: $e");
+      // Hata
     }
   }
 
   // =========================================================================
-  // ✅ KULLANICI İŞLEMLERİ (LOGIN, REGISTER, UPDATE)
+  // ✅ KULLANICI İŞLEMLERİ
   // =========================================================================
 
   static Future<Users?> login(String email, String password) async {
-    print("========== LOGIN TEST ==========");
-    print("Email: $email");
-    print("Password: $password");
+    // 🔥 Şifreyi SHA256 ile hash'le
+    final hashedPassword = _hashPassword(password);
 
     final response = await _postRequest({
       "action": "login",
       "email": email,
-      "password": password,
+      "password": hashedPassword, // Hash'lenmiş şifre gönder
     });
-
-    print("Response status: ${response?.statusCode}");
-    print("Response body: ${response?.body}");
 
     if (response != null && response.statusCode == 200) {
       try {
         final decoded = json.decode(response.body);
-        print("Decoded: $decoded");
 
         if (decoded['success'] == true) {
           Map<String, dynamic>? userMap;
 
           if (decoded['data'] != null && decoded['data']['user'] != null) {
             userMap = Map<String, dynamic>.from(decoded['data']['user']);
-            print("✅ userMap data.user'dan alındı");
           } else if (decoded['user'] != null) {
             userMap = Map<String, dynamic>.from(decoded['user']);
-            print("✅ userMap user'dan alındı");
           }
 
           if (userMap != null) {
             final prefs = await SharedPreferences.getInstance();
             await prefs.setString('logged_user', jsonEncode(userMap));
-
-            print("✅ Login başarılı! Kullanıcı: ${userMap['email']}");
             return Users.fromJson(userMap);
-          } else {
-            print("❌ userMap oluşturulamadı");
           }
-        } else {
-          print("❌ Login başarısız: ${decoded['error']}");
         }
       } catch (e) {
-        print("❌ JSON parse hatası: $e");
+        print("Login catch hatası: $e");
+        return null;
       }
-    } else {
-      print("❌ HTTP hatası: ${response?.statusCode}");
     }
-
     return null;
+  }
+
+  // 🔥 Hash fonksiyonunu da ekle (class içine)
+  static String _hashPassword(String password) {
+    final bytes = utf8.encode(password);
+    final digest = sha256.convert(bytes);
+    return digest.toString();
   }
 
   static Future<Users?> loginRequest(String email, String password) async {
@@ -1032,7 +1152,7 @@ class GoogleSheetService {
   }
 
   // =========================================================================
-  // ✅ GRUP İŞLEMLERİ (CACHE'SİZ - ORİJİNAL)
+  // ✅ GRUP İŞLEMLERİ (CACHE'SİZ)
   // =========================================================================
 
   static Future<List<Group>> getGroupsByCoach(String coachId) async {
@@ -1055,8 +1175,9 @@ class GoogleSheetService {
   }
 
   static Future<List<GroupStudent>> getGroupStudentsByGroupId(
-    String groupId,
-  ) async {
+    String groupId, {
+    bool forceRefresh = false,
+  }) async {
     final all = await getGroupStudents();
     return all.where((gs) => gs.groups_id == groupId).toList();
   }
@@ -1146,7 +1267,7 @@ class GoogleSheetService {
   }
 
   // =========================================================================
-  // ✅ GRUP-ÖĞRENCİ İLİŞKİLERİ (CACHE'SİZ - ORİJİNAL)
+  // ✅ GRUP-ÖĞRENCİ İLİŞKİLERİ (CACHE'SİZ)
   // =========================================================================
 
   static Future<List<GroupStudent>> getGroupStudentsByStudentId(
@@ -1198,22 +1319,28 @@ class GoogleSheetService {
     String studentId,
     String groupId,
   ) async {
-    final response = await _postRequest({
-      "action": "removeStudentFromGroup",
-      "student_id": studentId,
-      "group_id": groupId,
-    });
+    try {
+      final response = await _postRequest({
+        "action": "removeStudentFromGroup",
+        "student_id": studentId,
+        "group_id": groupId,
+      });
 
-    if (response != null && response.statusCode == 200) {
-      final decoded = json.decode(response.body);
-      final success = decoded['success'] == true;
-      if (success) {
-        invalidateCache('group_students');
-        invalidateCache('groups');
+      if (response != null && response.statusCode == 200) {
+        final decoded = json.decode(response.body);
+        final success = decoded['success'] == true;
+        if (success) {
+          // Cache'leri temizle
+          invalidateCache('group_students');
+          invalidateCache('groups');
+        }
+        return success;
       }
-      return success;
+      return false;
+    } catch (e) {
+      print("removeStudentFromGroup hatası: $e");
+      return false;
     }
-    return false;
   }
 
   static Future<bool> assignCoachToGroup(String groupId, String coachId) async {
@@ -1290,10 +1417,6 @@ class GoogleSheetService {
   }
 
   static Future<bool> saveAttendance(Attendance attendance) async {
-    print(
-      "💾 saveAttendance: Öğrenci=${attendance.student_id}, Tarih=${attendance.attendance_date}, Durum=${attendance.status}",
-    );
-
     final response = await _postRequest({
       "action": "saveAttendance",
       "sheet": "attendances",
@@ -1458,29 +1581,19 @@ class GoogleSheetService {
   // =========================================================================
 
   static Future<bool> registerEverywhere(Map<String, dynamic> allInfo) async {
-    print("========== REGISTER EVERYWHERE ==========");
-    print("Gelen allInfo: ${jsonEncode(allInfo)}");
-
     final response = await _postRequest({
       "action": "registerEverywhere",
       "data": allInfo,
     });
 
-    print("Response status: ${response?.statusCode}");
-    if (response != null) {
-      print("Response body: ${response.body}");
-    }
-
     if (response != null && response.statusCode == 200) {
       final decoded = jsonDecode(response.body);
-      print("Decoded: $decoded");
       final success = decoded['success'] == true;
       if (success) {
         invalidateAllCache();
       }
       return success;
     }
-    print("❌ registerEverywhere BAŞARISIZ!");
     return false;
   }
 
@@ -1556,10 +1669,8 @@ class GoogleSheetService {
         if (success) sentCount++;
       }
 
-      print("✅ Ödeme bildirimi gönderildi: $sentCount öğrenciye");
       return sentCount;
     } catch (e) {
-      print("❌ Ödeme bildirimi gönderilemedi: $e");
       return 0;
     }
   }
@@ -1619,7 +1730,6 @@ class GoogleSheetService {
       }
       return false;
     } catch (e) {
-      print("Token kaydedilemedi: $e");
       return false;
     }
   }
@@ -1658,6 +1768,21 @@ class GoogleSheetService {
     }
   }
 
+  // GoogleSheetService içinde
+  static Future<bool> updateFcmToken(String userId, String fcmToken) async {
+    final response = await _postRequest({
+      'action': 'updateFcmToken',
+      'user_id': userId,
+      'fcm_token': fcmToken,
+    });
+
+    if (response != null && response.statusCode == 200) {
+      final decoded = jsonDecode(response.body);
+      return decoded['success'] == true;
+    }
+    return false;
+  }
+
   static Future<bool> sendPushNotification(
     String title,
     String body,
@@ -1681,7 +1806,6 @@ class GoogleSheetService {
       }
       return false;
     } catch (e) {
-      print("Push notification gönderilemedi: $e");
       return false;
     }
   }
@@ -1792,7 +1916,6 @@ class GoogleSheetService {
   // =========================================================================
   // ✅ FOTOĞRAF YÜKLEME
   // =========================================================================
-  /*
   static Future<String?> uploadImageToDrive(
     File imageFile,
     String fileName,
@@ -1801,8 +1924,6 @@ class GoogleSheetService {
     String? targetField,
   }) async {
     try {
-      print("📸 Yükleniyor: $fileName -> $folderName");
-
       List<int> imageBytes = await imageFile.readAsBytes();
       String base64Image = base64Encode(imageBytes);
 
@@ -1823,19 +1944,20 @@ class GoogleSheetService {
       if (response != null && response.statusCode == 200) {
         final decoded = jsonDecode(response.body);
         if (decoded['success'] == true) {
-          print("✅ Fotoğraf yüklendi: $fileName");
-          print("   URL: ${decoded['data']['url']}");
-          invalidateCache('users');
-          return decoded['data']['url'];
-        } else {
-          print("❌ API hatası: ${decoded['error']}");
+          // 🔥 DEĞİŞİM: 'fileId' döndür (artık URL değil)
+          return decoded['data']['fileId']; // Drive ID'si
         }
       }
       return null;
     } catch (e) {
-      print("❌ Fotoğraf yükleme hatası: $e");
       return null;
     }
+  }
+
+  // Yeni yardımcı fonksiyon: ID'yi URL'ye çevir
+  static String getPhotoUrlFromId(String? fileId) {
+    if (fileId == null || fileId.isEmpty) return "";
+    return "https://drive.google.com/uc?export=view&id=$fileId";
   }
 
   static Future<String?> getImageUrlFromDrive(
@@ -1859,77 +1981,6 @@ class GoogleSheetService {
       }
       return null;
     } catch (e) {
-      print("Resim URL alma hatası: $e");
-      return null;
-    }
-  }
-*/
-  static Future<String?> uploadImageToDrive(
-    File imageFile,
-    String fileName,
-    String folderName, {
-    String? targetUserId,
-    String? targetField,
-  }) async {
-    try {
-      print("📸 Yükleniyor: $fileName -> $folderName");
-
-      List<int> imageBytes = await imageFile.readAsBytes();
-      String base64Image = base64Encode(imageBytes);
-
-      final requestBody = {
-        "action": "uploadImage",
-        "file_name": fileName,
-        "file_data": base64Image,
-        "folder": folderName,
-      };
-
-      if (targetUserId != null && targetField != null) {
-        requestBody["targetUserId"] = targetUserId;
-        requestBody["targetField"] = targetField;
-      }
-
-      final response = await _postRequest(requestBody);
-
-      if (response != null && response.statusCode == 200) {
-        final decoded = jsonDecode(response.body);
-        if (decoded['success'] == true) {
-          print("✅ Fotoğraf yüklendi: $fileName");
-          print("   URL: ${decoded['data']['url']}");
-          return decoded['data']['url'];
-        } else {
-          print("❌ API hatası: ${decoded['error']}");
-        }
-      }
-      return null;
-    } catch (e) {
-      print("❌ Fotoğraf yükleme hatası: $e");
-      return null;
-    }
-  }
-
-  static Future<String?> getImageUrlFromDrive(
-    String fileName,
-    String folderName,
-  ) async {
-    if (fileName.isEmpty) return null;
-
-    try {
-      final response = await _postRequest({
-        "action": "getImageUrl",
-        "file_name": fileName,
-        "folder": folderName,
-      });
-
-      if (response != null && response.statusCode == 200) {
-        final decoded = jsonDecode(response.body);
-        if (decoded['success'] == true) {
-          return decoded['data']['url'];
-        }
-      }
-      return null;
-    } catch (e) {
-      print("Resim URL alma hatası: $e");
       return null;
     }
   }
@@ -1966,15 +2017,11 @@ class GoogleSheetService {
         final success = decoded['success'] == true;
         if (success) {
           invalidateCache('groups');
-          print("✅ Grup durumu güncellendi: $groupId -> $newStatus");
-        } else {
-          print("❌ Grup durumu güncellenemedi: ${decoded['error']}");
         }
         return success;
       }
       return false;
     } catch (e) {
-      print("❌ updateGroupStatus hatası: $e");
       return false;
     }
   }
@@ -1991,15 +2038,106 @@ class GoogleSheetService {
         final decoded = jsonDecode(response.body);
         final success = decoded['success'] == true;
         if (success) {
-          print("✅ Kullanıcı ücreti güncellendi: $userId -> $newAmount TL");
           invalidateCache('users');
         }
         return success;
       }
       return false;
     } catch (e) {
-      print("❌ updateUserAmount hatası: $e");
       return false;
     }
+  }
+
+  static Future<bool> updateGroupSchedule(
+    String groupId,
+    String newSchedule,
+  ) async {
+    final response = await _postRequest({
+      "action": "updateGroupSchedule",
+      "group_id": groupId,
+      "schedule": newSchedule,
+    });
+
+    print("📡 Response status: ${response?.statusCode}");
+    print("📡 Response body: ${response?.body}"); // ← BU SATIRI EKLE
+
+    if (response != null && response.statusCode == 200) {
+      final success = jsonDecode(response.body)['success'] == true;
+      if (success) {
+        invalidateCache('groups');
+      }
+      return success;
+    }
+    return false;
+  }
+
+  static Future<bool> transferStudentToGroup(
+    String studentId,
+    String newGroupId,
+  ) async {
+    try {
+      final response = await _postRequest({
+        'action': 'transferStudentToGroup',
+        'student_id': studentId,
+        'new_group_id': newGroupId,
+      });
+
+      if (response == null || response.statusCode != 200) {
+        return false;
+      }
+
+      final decoded = jsonDecode(response.body);
+      final isSuccess = decoded['success'] == true;
+
+      if (isSuccess) {
+        invalidateCache('group_students');
+        invalidateCache('groups');
+      }
+
+      return isSuccess;
+    } catch (e) {
+      print("Transfer hatası: $e");
+      return false;
+    }
+  }
+
+  // Ödeme silme
+  static Future<bool> deletePayment(String paymentId) async {
+    final response = await _postRequest({
+      "action": "deletePayment",
+      "payments_id": paymentId,
+    });
+
+    if (response != null && response.statusCode == 200) {
+      final decoded = jsonDecode(response.body);
+      final success = decoded['success'] == true;
+      if (success) {
+        invalidateCache('payments');
+      }
+      return success;
+    }
+    return false;
+  }
+
+  // Ödeme güncelleme
+  static Future<bool> updatePayment(
+    String paymentId,
+    Map<String, dynamic> updateData,
+  ) async {
+    final response = await _postRequest({
+      "action": "updatePayment",
+      "payments_id": paymentId,
+      "data": updateData,
+    });
+
+    if (response != null && response.statusCode == 200) {
+      final decoded = jsonDecode(response.body);
+      final success = decoded['success'] == true;
+      if (success) {
+        invalidateCache('payments');
+      }
+      return success;
+    }
+    return false;
   }
 }

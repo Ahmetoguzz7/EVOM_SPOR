@@ -8,7 +8,18 @@
   - Anlamlı hata mesajları ve yükleme animasyonları
   - Son giriş tarihi gösterimi (Türkçe format)
   */
+
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:EVOM_SPOR/widgets/acountantoverlay.dart';
+import 'package:EVOM_SPOR/widgets/coachoverlay.dart';
+import 'package:EVOM_SPOR/widgets/loading_manager.dart';
+import 'package:EVOM_SPOR/widgets/parentLoading.dart';
+import 'package:EVOM_SPOR/widgets/studentoverlay.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:EVOM_SPOR/parent/parent_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -121,6 +132,26 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkSavedUser();
     });
+  }
+
+  Future<void> saveToken(String token) async {
+    final url = Uri.parse(
+      "https://script.google.com/macros/s/AKfycby3EW0jopQmtAZf-v_TVW8oNUS7BANs6EuMgAi4bisyz07gtlWqAQtPFIF6eIIf_cTXRg/exec",
+    );
+
+    final request = http.Request('POST', url)
+      ..followRedirects = true
+      ..maxRedirects = 5
+      ..bodyFields = {'action': 'saveToken', 'userId': '727', 'token': token};
+
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
+
+    if (response.statusCode == 200) {
+      print("✅ Token başarıyla kaydedildi!");
+    } else {
+      print("❌ Hata kodu: ${response.statusCode}");
+    }
   }
 
   @override
@@ -285,16 +316,45 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
   Future<void> _completeLogin(Users user) async {
     final roleType = _getRoleType(user.role);
 
+    // 🔥 FCM TOKEN KAYDET
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'logged_user',
+        jsonEncode({
+          'app': user.app,
+          'email': user.email,
+          'role': user.role,
+          'first_name': user.first_name,
+          'last_name': user.last_name,
+        }),
+      );
+
+      final fcmToken = await FirebaseMessaging.instance.getToken();
+      print("🔥 FCM TOKEN: $fcmToken");
+      print("🔥 USER ID: ${user.app}");
+      print("🔥 USER ROLE: ${user.role}");
+
+      if (fcmToken != null && user.app != null && user.app.isNotEmpty) {
+        await GoogleSheetService.updateFcmToken(user.app, fcmToken);
+      }
+    } catch (e) {
+      print("🔥 FCM HATA: $e");
+    }
+
+    print("🎯 roleType: $roleType");
+    print("🎯 user.role: ${user.role}");
+
+    // 🔥 SPLASHSCREEN YOK! Doğrudan Loading Screen'lere yönlendir
+    // Veriler Loading Screen'lerde yüklenecek
+
     if (roleType == 'admin') {
       if (mounted) {
         Navigator.pushReplacement(
           context,
-          PageRouteBuilder(
-            pageBuilder: (_, __, ___) =>
-                AdminDashboard(currentUserRole: 'admin', currentUser: user),
-            transitionsBuilder: (_, a, __, c) =>
-                FadeTransition(opacity: a, child: c),
-            transitionDuration: const Duration(milliseconds: 300),
+          MaterialPageRoute(
+            builder: (_) =>
+                AdminLoadingScreen(currentUserRole: 'admin', user: user),
           ),
         );
       }
@@ -302,97 +362,36 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
       if (mounted) {
         Navigator.pushReplacement(
           context,
-          PageRouteBuilder(
-            pageBuilder: (_, __, ___) => AccountantInterface(
+          MaterialPageRoute(
+            builder: (_) => AccountantLoadingScreen(
               currentUserRole: 'accountant',
-              currentUser: user,
+              user: user,
             ),
-            transitionsBuilder: (_, a, __, c) =>
-                FadeTransition(opacity: a, child: c),
-            transitionDuration: const Duration(milliseconds: 300),
           ),
         );
       }
     } else if (roleType == 'coach') {
-      setState(() => _isLoading = true);
-
-      final stopwatch = Stopwatch()..start();
-
-      final results = await Future.wait([
-        GoogleSheetService.getCoachesCached(),
-        GoogleSheetService.getSportsCached(),
-        GoogleSheetService.getGroupsCached(),
-        GoogleSheetService.getUsersCached(),
-        GoogleSheetService.getPaymentsCached(),
-      ]);
-
-      stopwatch.stop();
-      print("⏱️ Coach verileri ${stopwatch.elapsedMilliseconds}ms'de yüklendi");
-
-      final coaches = results[0] as List<Coach>;
-      final sports = results[1] as List<Sports>;
-
-      final coachData = coaches.firstWhere(
-        (c) => c.user_id == user.app,
-        orElse: () => Coach(
-          coach_id: "",
-          user_id: user.app,
-          branches_id: "",
-          sports_id: "",
-          bio: "",
-          certificate_info: "",
-          monthly_salary: "",
-          hired_at: "",
-        ),
-      );
-
-      final sportData = coachData.sports_id.isNotEmpty
-          ? sports.firstWhere(
-              (s) => s.sports_id == coachData.sports_id,
-              orElse: () =>
-                  Sports(sports_id: "", name: "Spor", description: ""),
-            )
-          : Sports(sports_id: "", name: "Spor", description: "");
-
-      setState(() => _isLoading = false);
-
       if (mounted) {
         Navigator.pushReplacement(
           context,
-          PageRouteBuilder(
-            pageBuilder: (_, __, ___) => PersonalTrainer(
-              users: user,
-              sport: sportData,
-              coachData: coachData,
-            ),
-            transitionsBuilder: (_, a, __, c) =>
-                FadeTransition(opacity: a, child: c),
-            transitionDuration: const Duration(milliseconds: 300),
+          MaterialPageRoute(
+            builder: (_) => CoachLoadingScreen(user: user, users: user),
           ),
         );
       }
     } else if (roleType == 'student') {
+      print("🎯 ÖĞRENCİ OLARAK GİRİŞ YAPILIYOR...");
       if (mounted) {
         Navigator.pushReplacement(
           context,
-          PageRouteBuilder(
-            pageBuilder: (_, __, ___) => UserInterface(user: user),
-            transitionsBuilder: (_, a, __, c) =>
-                FadeTransition(opacity: a, child: c),
-            transitionDuration: const Duration(milliseconds: 300),
-          ),
+          MaterialPageRoute(builder: (_) => StudentLoadingScreen(user: user)),
         );
       }
     } else if (roleType == 'parent') {
       if (mounted) {
         Navigator.pushReplacement(
           context,
-          PageRouteBuilder(
-            pageBuilder: (_, __, ___) => VeliAnaSayfa(veli: user),
-            transitionsBuilder: (_, a, __, c) =>
-                FadeTransition(opacity: a, child: c),
-            transitionDuration: const Duration(milliseconds: 300),
-          ),
+          MaterialPageRoute(builder: (_) => ParentLoadingScreen(user: user)),
         );
       }
     } else {

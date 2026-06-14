@@ -1,738 +1,23 @@
-/*import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
-import 'package:EVOM_SPOR/datapage/data_page/data.dart';
-
-class WeeklyTrainingScreen extends StatefulWidget {
-  final List<Group> groups;
-  final List<GroupStudent> relations;
-  final List<Users> students;
-
-  const WeeklyTrainingScreen({
-    Key? key,
-    required this.groups,
-    required this.relations,
-    required this.students,
-  }) : super(key: key);
-
-  @override
-  State<WeeklyTrainingScreen> createState() => _WeeklyTrainingScreenState();
-}
-
-class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
-    with SingleTickerProviderStateMixin {
-  late TabController _tabController;
-  List<Map<String, dynamic>> _weeklySchedule = [];
-  List<Users> _todaysStudents = [];
-  String _selectedDay = "";
-  Map<String, List<Map<String, dynamic>>> _groupedSchedule = {};
-
-  // Günler (Türkçe sıralı)
-  final List<String> _days = [
-    "Pazartesi",
-    "Salı",
-    "Çarşamba",
-    "Perşembe",
-    "Cuma",
-    "Cumartesi",
-    "Pazar",
-  ];
-
-  // Renkler
-  static const Color _bg = Color(0xFFF8FAFC);
-  static const Color _surface = Colors.white;
-  static const Color _surfaceLight = Color(0xFFF1F5F9);
-  static const Color _accent = Color(0xFF0EA5E9);
-  static const Color _accentDark = Color(0xFF0284C7);
-  static const Color _textPrimary = Color(0xFF0F172A);
-  static const Color _textSecondary = Color(0xFF64748B);
-  static const Color _textTertiary = Color(0xFF94A3B8);
-  static const Color _border = Color(0xFFE2E8F0);
-  static const Color _success = Color(0xFF22C55E);
-  static const Color _warning = Color(0xFFF97316);
-  static const Color _danger = Color(0xFFEF4444);
-  static const Color _purple = Color(0xFF8B5CF6);
-
-  @override
-  void initState() {
-    super.initState();
-    _tabController = TabController(length: 2, vsync: this);
-    _loadSchedule();
-    _selectedDay = _getTodayName();
-  }
-
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
-  }
-
-  // 🔥 GELİŞMİŞ SCHEDULE PARSE
-  List<Map<String, dynamic>> _parseSchedule(String scheduleStr) {
-    final List<Map<String, dynamic>> result = [];
-    if (scheduleStr.isEmpty) return result;
-
-    final parts = scheduleStr.split(',');
-    if (parts.length != 2) return result;
-
-    final daysPart = parts[0].trim().toLowerCase();
-    final timePart = parts[1].trim();
-
-    final dayNames = daysPart.split('-');
-
-    final Map<String, String> dayMap = {
-      'pazartesi': 'Pazartesi',
-      'sali': 'Salı',
-      'çarşamba': 'Çarşamba',
-      'carsamba': 'Çarşamba',
-      'perşembe': 'Perşembe',
-      'persembe': 'Perşembe',
-      'cuma': 'Cuma',
-      'cumartesi': 'Cumartesi',
-      'pazar': 'Pazar',
-    };
-
-    for (var day in dayNames) {
-      final formattedDay = dayMap[day] ?? day;
-      result.add({'day': formattedDay, 'time': timePart});
-    }
-
-    return result;
-  }
-
-  void _loadSchedule() {
-    _weeklySchedule = [];
-    _todaysStudents = [];
-
-    final todayName = _getTodayName();
-
-    for (var group in widget.groups) {
-      if (group.schedule.isEmpty) continue;
-
-      final schedules = _parseSchedule(group.schedule);
-
-      for (var schedule in schedules) {
-        final day = schedule['day'];
-        final time = schedule['time'];
-
-        _weeklySchedule.add({
-          'day': day,
-          'dayIndex': _days.indexOf(day),
-          'time': time,
-          'groupName': group.name,
-          'groupId': group.groups_id,
-        });
-
-        if (day == todayName) {
-          final students = _getStudentsInGroup(group.groups_id);
-          _todaysStudents.addAll(students);
-        }
-      }
-    }
-
-    _weeklySchedule.sort((a, b) => a['dayIndex'].compareTo(b['dayIndex']));
-
-    // Günlere göre grupla
-    _groupedSchedule = {};
-    for (var item in _weeklySchedule) {
-      final day = item['day'];
-      if (!_groupedSchedule.containsKey(day)) {
-        _groupedSchedule[day] = [];
-      }
-      _groupedSchedule[day]!.add(item);
-    }
-
-    _todaysStudents = _todaysStudents.toSet().toList();
-  }
-
-  List<Users> _getStudentsInGroup(String groupId) {
-    final studentIds = widget.relations
-        .where((r) => r.groups_id == groupId && r.is_active == "TRUE")
-        .map((r) => r.student_id)
-        .toList();
-
-    return widget.students.where((s) => studentIds.contains(s.app)).toList();
-  }
-
-  String _getTodayName() {
-    final now = DateTime.now();
-    return _days[now.weekday - 1];
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _bg,
-      appBar: AppBar(
-        backgroundColor: _surface,
-        elevation: 0,
-        title: const Text(
-          "Antrenman Programı",
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 22,
-            color: _textPrimary,
-          ),
-        ),
-        centerTitle: false,
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(50),
-          child: _buildDaySelector(),
-        ),
-      ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [_buildWeeklyScheduleTab(), _buildTodayStudentsTab()],
-      ),
-    );
-  }
-
-  // 🔥 GÜN SEÇİCİ (Yatay scroll)
-  Widget _buildDaySelector() {
-    return Container(
-      height: 50,
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: _days.length,
-        itemBuilder: (context, index) {
-          final day = _days[index];
-          final isToday = day == _getTodayName();
-          final hasTraining = _groupedSchedule.containsKey(day);
-          final isSelected = _selectedDay == day;
-
-          return GestureDetector(
-            onTap: () => setState(() => _selectedDay = day),
-            child: Container(
-              margin: const EdgeInsets.only(right: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                color: isSelected ? _accent : Colors.transparent,
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                  color: isSelected ? Colors.transparent : _border,
-                  width: 1,
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    day,
-                    style: TextStyle(
-                      color: isSelected
-                          ? Colors.white
-                          : (isToday ? _accent : _textSecondary),
-                      fontWeight: isSelected || isToday
-                          ? FontWeight.bold
-                          : FontWeight.normal,
-                      fontSize: 14,
-                    ),
-                  ),
-                  if (hasTraining && !isSelected)
-                    Container(
-                      margin: const EdgeInsets.only(left: 6),
-                      width: 6,
-                      height: 6,
-                      decoration: BoxDecoration(
-                        color: _accent,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildWeeklyScheduleTab() {
-    if (_weeklySchedule.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.calendar_today, size: 64, color: _textTertiary),
-            const SizedBox(height: 16),
-            Text(
-              "Henüz program eklenmemiş",
-              style: TextStyle(color: _textSecondary, fontSize: 16),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              "Excel'de schedule sütununa program ekleyin",
-              style: TextStyle(color: _textTertiary, fontSize: 12),
-            ),
-          ],
-        ),
-      );
-    }
-
-    final selectedDayItems = _groupedSchedule[_selectedDay] ?? [];
-    final isToday = _selectedDay == _getTodayName();
-
-    return Column(
-      children: [
-        // Seçili gün başlığı
-        Container(
-          padding: const EdgeInsets.all(16),
-          color: _surface,
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: isToday
-                      ? _accent.withOpacity(0.1)
-                      : _purple.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Icon(
-                  isToday ? Icons.today : Icons.calendar_today,
-                  color: isToday ? _accent : _purple,
-                  size: 24,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _selectedDay,
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: isToday ? _accent : _textPrimary,
-                      ),
-                    ),
-                    Text(
-                      "${selectedDayItems.length} antrenman",
-                      style: TextStyle(color: _textSecondary, fontSize: 13),
-                    ),
-                  ],
-                ),
-              ),
-              if (isToday)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: _accent,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: const Text(
-                    "Bugün",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        // Antrenman listesi
-        Expanded(
-          child: selectedDayItems.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.sports, size: 48, color: _textTertiary),
-                      const SizedBox(height: 12),
-                      Text(
-                        "Bu günde antrenman yok",
-                        style: TextStyle(color: _textSecondary),
-                      ),
-                    ],
-                  ),
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: selectedDayItems.length,
-                  itemBuilder: (context, index) {
-                    final item = selectedDayItems[index];
-                    final groupId = item['groupId'];
-                    final studentCount = _getStudentsInGroup(groupId).length;
-
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      decoration: BoxDecoration(
-                        color: _surface,
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: _border),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.03),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(20),
-                          onTap: () => _showGroupDetail(
-                            groupId,
-                            item['groupName'],
-                            item['time'],
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Row(
-                              children: [
-                                Container(
-                                  width: 52,
-                                  height: 52,
-                                  decoration: BoxDecoration(
-                                    gradient: LinearGradient(
-                                      colors: [_accent, _accentDark],
-                                      begin: Alignment.topLeft,
-                                      end: Alignment.bottomRight,
-                                    ),
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                  child: const Center(
-                                    child: Icon(
-                                      Icons.sports,
-                                      color: Colors.white,
-                                      size: 28,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 16),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        item['groupName'],
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 16,
-                                          color: _textPrimary,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Row(
-                                        children: [
-                                          Icon(
-                                            Icons.access_time,
-                                            size: 14,
-                                            color: _textSecondary,
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            item['time'],
-                                            style: TextStyle(
-                                              color: _accent,
-                                              fontWeight: FontWeight.w500,
-                                              fontSize: 13,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Icon(
-                                            Icons.people,
-                                            size: 14,
-                                            color: _textSecondary,
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            "$studentCount öğrenci",
-                                            style: TextStyle(
-                                              color: _textSecondary,
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                Container(
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: BoxDecoration(
-                                    color: _accent.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: const Icon(
-                                    Icons.chevron_right,
-                                    color: _accent,
-                                    size: 20,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-        ),
-      ],
-    );
-  }
-
-  void _showGroupDetail(String groupId, String groupName, String time) {
-    final students = _getStudentsInGroup(groupId);
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => Container(
-        decoration: const BoxDecoration(
-          color: _surface,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-        ),
-        child: DraggableScrollableSheet(
-          initialChildSize: 0.6,
-          maxChildSize: 0.9,
-          minChildSize: 0.4,
-          expand: false,
-          builder: (_, sc) => Column(
-            children: [
-              const SizedBox(height: 12),
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: _border,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 52,
-                      height: 52,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [_accent, _accentDark],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: const Center(
-                        child: Icon(
-                          Icons.sports,
-                          color: Colors.white,
-                          size: 28,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            groupName,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 18,
-                              color: _textPrimary,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            "Saat: $time",
-                            style: TextStyle(
-                              color: _accent,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close, color: _textSecondary),
-                      onPressed: () => Navigator.pop(ctx),
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(color: _border, height: 1),
-              Expanded(
-                child: students.isEmpty
-                    ? const Center(
-                        child: Text(
-                          "Bu grupta öğrenci yok",
-                          style: TextStyle(color: _textSecondary),
-                        ),
-                      )
-                    : ListView.builder(
-                        controller: sc,
-                        padding: const EdgeInsets.all(16),
-                        itemCount: students.length,
-                        itemBuilder: (context, index) {
-                          final student = students[index];
-                          return Container(
-                            margin: const EdgeInsets.only(bottom: 10),
-                            decoration: BoxDecoration(
-                              color: _surfaceLight,
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: ListTile(
-                              leading: Container(
-                                width: 44,
-                                height: 44,
-                                decoration: BoxDecoration(
-                                  color: _accent.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                                child: Center(
-                                  child: Text(
-                                    student.first_name.isNotEmpty
-                                        ? student.first_name[0].toUpperCase()
-                                        : "?",
-                                    style: TextStyle(
-                                      color: _accent,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 18,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              title: Text(
-                                "${student.first_name} ${student.last_name}",
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              subtitle: Text(
-                                student.email,
-                                style: TextStyle(
-                                  color: _textSecondary,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTodayStudentsTab() {
-    if (_todaysStudents.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.sports, size: 64, color: _textTertiary),
-            const SizedBox(height: 16),
-            Text(
-              "Bugün antrenmanı olan öğrenci yok",
-              style: TextStyle(color: _textSecondary, fontSize: 16),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: _todaysStudents.length,
-      itemBuilder: (context, index) {
-        final student = _todaysStudents[index];
-        return Container(
-          margin: const EdgeInsets.only(bottom: 10),
-          decoration: BoxDecoration(
-            color: _surface,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: _border),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.03),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: ListTile(
-            leading: Container(
-              width: 52,
-              height: 52,
-              decoration: BoxDecoration(
-                color: _accent.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Center(
-                child: Text(
-                  student.first_name.isNotEmpty
-                      ? student.first_name[0].toUpperCase()
-                      : "?",
-                  style: TextStyle(
-                    color: _accent,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 22,
-                  ),
-                ),
-              ),
-            ),
-            title: Text(
-              "${student.first_name} ${student.last_name}",
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-            ),
-            subtitle: Text(
-              student.email,
-              style: TextStyle(color: _textSecondary, fontSize: 13),
-            ),
-            trailing: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: _accent.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: const Text(
-                "Bugün",
-                style: TextStyle(
-                  color: _accent,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-*/
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:EVOM_SPOR/datapage/data_page/data.dart';
+import 'package:EVOM_SPOR/core/app_repository.dart';
 
 class WeeklyTrainingScreen extends StatefulWidget {
   final List<Group> groups;
   final List<GroupStudent> relations;
   final List<Users> students;
+  final List<Coach> coaches;
+  final Future<void> Function(String groupId, String newSchedule)?
+  onScheduleUpdated;
 
   const WeeklyTrainingScreen({
     Key? key,
     required this.groups,
     required this.relations,
     required this.students,
+    required this.coaches,
+    this.onScheduleUpdated,
   }) : super(key: key);
 
   @override
@@ -741,13 +26,11 @@ class WeeklyTrainingScreen extends StatefulWidget {
 
 class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
     with SingleTickerProviderStateMixin {
-  late TabController _tabController;
+  late List<Group> _groups;
   List<Map<String, dynamic>> _weeklySchedule = [];
-  List<Users> _todaysStudents = [];
   String _selectedDay = "";
   Map<String, List<Map<String, dynamic>>> _groupedSchedule = {};
 
-  // Günler (Türkçe sıralı)
   final List<String> _days = [
     "Pazartesi",
     "Salı",
@@ -758,98 +41,141 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
     "Pazar",
   ];
 
-  // Renkler
   static const Color _bg = Color(0xFFF8FAFC);
   static const Color _surface = Colors.white;
-  static const Color _surfaceLight = Color(0xFFF1F5F9);
   static const Color _accent = Color(0xFF0EA5E9);
   static const Color _accentDark = Color(0xFF0284C7);
   static const Color _textPrimary = Color(0xFF0F172A);
   static const Color _textSecondary = Color(0xFF64748B);
   static const Color _textTertiary = Color(0xFF94A3B8);
   static const Color _border = Color(0xFFE2E8F0);
-  static const Color _success = Color(0xFF22C55E);
-  static const Color _warning = Color(0xFFF97316);
-  static const Color _danger = Color(0xFFEF4444);
+  static const Color _orange = Color(0xFFF97316);
+  static const Color _red = Color(0xFFEF4444);
   static const Color _purple = Color(0xFF8B5CF6);
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _groups = List.from(widget.groups);
     _loadSchedule();
     _selectedDay = _getTodayName();
   }
 
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
-  }
-
-  // =========================================================================
-  // 🔥 TÜRKÇE TARİH FONKSİYONLARI
-  // =========================================================================
-
-  // Bugünün tarihini Türkçe formatla göster
   String _getTodayDateTurkish() {
     final now = DateTime.now();
     final formatter = DateFormat('dd MMMM yyyy', 'tr_TR');
     return formatter.format(now);
   }
 
-  // Haftanın gününü al (Pazartesi, Salı...)
   String _getTodayName() {
     final now = DateTime.now();
     return _days[now.weekday - 1];
   }
 
-  // Kısa tarih formatı
-  String _formatDateShort(DateTime date) {
-    final formatter = DateFormat('dd/MM/yyyy', 'tr_TR');
-    return formatter.format(date);
+  // 🔥 DÜZELTİLDİ: manager_group.dart'daki _getCoachName ile aynı mantık
+  String _getCoachName(String coachId) {
+    if (coachId.isEmpty) return "Atanmamış";
+
+    // 1. Coach listesinde coach_id ile ara
+    final coach = widget.coaches.firstWhere(
+      (c) => c.coach_id == coachId,
+      orElse: () => Coach(
+        coach_id: "",
+        user_id: "",
+        branches_id: "",
+        sports_id: "",
+        bio: "",
+        certificate_info: "",
+        monthly_salary: "",
+        hired_at: "",
+      ),
+    );
+
+    if (coach.user_id.isEmpty) return "Atanmamış";
+
+    // 2. Bulduğumuz Coach'un user_id'si ile students listesinde ara
+    final coachUser = widget.students.firstWhere(
+      (u) => u.app == coach.user_id,
+      orElse: () => Users(
+        app: "",
+        branches_id: "",
+        first_name: "",
+        last_name: "",
+        email: "",
+        phone: "",
+        password_hash: "",
+        role: "",
+        profile_photo_url: "",
+        amount: "",
+        b_date: "",
+        created_at: "",
+        last_login: "",
+        is_active: "",
+      ),
+    );
+
+    if (coachUser.first_name.isEmpty) return "Atanmamış";
+
+    return "${coachUser.first_name} ${coachUser.last_name}".trim();
   }
 
-  // Uzun tarih formatı
-  String _formatDateLong(DateTime date) {
-    final formatter = DateFormat('dd MMMM yyyy', 'tr_TR');
-    return formatter.format(date);
-  }
-
-  // Saat formatı
-  String _formatTime(String timeStr) {
-    // timeStr "14:30" formatında geliyorsa direkt döndür
-    return timeStr;
-  }
-
-  // 🔥 GELİŞMİŞ SCHEDULE PARSE
-  List<Map<String, dynamic>> _parseSchedule(String scheduleStr) {
+  List<Map<String, dynamic>> _parseSchedule(String schedule) {
     final List<Map<String, dynamic>> result = [];
-    if (scheduleStr.isEmpty) return result;
-
-    final parts = scheduleStr.split(',');
-    if (parts.length != 2) return result;
-
-    final daysPart = parts[0].trim().toLowerCase();
-    final timePart = parts[1].trim();
-
-    final dayNames = daysPart.split('-');
-
-    final Map<String, String> dayMap = {
-      'pazartesi': 'Pazartesi',
-      'sali': 'Salı',
-      'çarşamba': 'Çarşamba',
-      'carsamba': 'Çarşamba',
-      'perşembe': 'Perşembe',
-      'persembe': 'Perşembe',
-      'cuma': 'Cuma',
-      'cumartesi': 'Cumartesi',
-      'pazar': 'Pazar',
+    final dayMap = {
+      'pazartesi': 1,
+      'salı': 2,
+      'çarşamba': 3,
+      'perşembe': 4,
+      'cuma': 5,
+      'cumartesi': 6,
+      'pazar': 7,
     };
 
-    for (var day in dayNames) {
-      final formattedDay = dayMap[day] ?? day;
-      result.add({'day': formattedDay, 'time': timePart});
+    schedule = schedule.trim();
+
+    final format1Regex = RegExp(
+      r'(\w+)\s*:\s*(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})',
+      caseSensitive: false,
+    );
+
+    final format1Matches = format1Regex.allMatches(schedule);
+    if (format1Matches.isNotEmpty) {
+      for (final match in format1Matches) {
+        final day = match.group(1)!.toLowerCase().trim();
+        final start = match.group(2)!.trim();
+        final end = match.group(3)!.trim();
+        if (dayMap.containsKey(day)) {
+          result.add({'day': dayMap[day]!, 'start': start, 'end': end});
+        }
+      }
+      return result;
+    }
+
+    if (schedule.contains(',')) {
+      final parts = schedule.split(',');
+      if (parts.length >= 2) {
+        final daysPart = parts[0].trim();
+        final timePart = parts.sublist(1).join(',').trim();
+
+        final timeMatch = RegExp(
+          r'(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})',
+        ).firstMatch(timePart);
+
+        if (timeMatch != null) {
+          final start = timeMatch.group(1)!;
+          final end = timeMatch.group(2)!;
+
+          final days = daysPart
+              .split('-')
+              .map((d) => d.trim().toLowerCase())
+              .where((d) => dayMap.containsKey(d))
+              .toList();
+
+          for (final day in days) {
+            result.add({'day': dayMap[day]!, 'start': start, 'end': end});
+          }
+        }
+      }
     }
 
     return result;
@@ -857,56 +183,636 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
 
   void _loadSchedule() {
     _weeklySchedule = [];
-    _todaysStudents = [];
 
-    final todayName = _getTodayName();
-
-    for (var group in widget.groups) {
+    for (var group in _groups) {
       if (group.schedule.isEmpty) continue;
 
       final schedules = _parseSchedule(group.schedule);
+      final coachName = _getCoachName(group.coach_id);
 
       for (var schedule in schedules) {
-        final day = schedule['day'];
-        final time = schedule['time'];
+        final dayInt = schedule['day'] as int;
+        final dayIndex = dayInt - 1;
+        final dayName = _days[dayIndex];
 
         _weeklySchedule.add({
-          'day': day,
-          'dayIndex': _days.indexOf(day),
-          'time': time,
+          'day': dayName,
+          'dayIndex': dayIndex,
+          'time': '${schedule['start']} - ${schedule['end']}',
+          'start': schedule['start'],
+          'end': schedule['end'],
           'groupName': group.name,
           'groupId': group.groups_id,
+          'coachName': coachName,
         });
-
-        if (day == todayName) {
-          final students = _getStudentsInGroup(group.groups_id);
-          _todaysStudents.addAll(students);
-        }
       }
     }
 
-    _weeklySchedule.sort((a, b) => a['dayIndex'].compareTo(b['dayIndex']));
+    _weeklySchedule.sort(
+      (a, b) => (a['dayIndex'] as int).compareTo(b['dayIndex'] as int),
+    );
 
-    // Günlere göre grupla
     _groupedSchedule = {};
     for (var item in _weeklySchedule) {
-      final day = item['day'];
+      final day = item['day'] as String;
       if (!_groupedSchedule.containsKey(day)) {
         _groupedSchedule[day] = [];
       }
       _groupedSchedule[day]!.add(item);
     }
-
-    _todaysStudents = _todaysStudents.toSet().toList();
   }
 
-  List<Users> _getStudentsInGroup(String groupId) {
-    final studentIds = widget.relations
-        .where((r) => r.groups_id == groupId && r.is_active == "TRUE")
-        .map((r) => r.student_id)
-        .toList();
+  String _buildScheduleString(
+    String existingSchedule,
+    List<String> selectedDayNames,
+    String start,
+    String end, {
+    String? removeEntry,
+  }) {
+    final dayTr = {
+      'Pazartesi': 'pazartesi',
+      'Salı': 'salı',
+      'Çarşamba': 'çarşamba',
+      'Perşembe': 'perşembe',
+      'Cuma': 'cuma',
+      'Cumartesi': 'cumartesi',
+      'Pazar': 'pazar',
+    };
 
-    return widget.students.where((s) => studentIds.contains(s.app)).toList();
+    final existing = _parseSchedule(existingSchedule);
+
+    List<Map<String, dynamic>> entries = List.from(existing);
+    if (removeEntry != null) {
+      final parts = removeEntry.split(':');
+      if (parts.length == 2) {
+        final dayTrKey = dayTr.entries
+            .firstWhere(
+              (e) => e.key == parts[0],
+              orElse: () => const MapEntry('', ''),
+            )
+            .value;
+        final timeParts = parts[1].split('-');
+        if (timeParts.length == 2) {
+          entries.removeWhere((e) {
+            final dayMap = {
+              1: 'pazartesi',
+              2: 'salı',
+              3: 'çarşamba',
+              4: 'perşembe',
+              5: 'cuma',
+              6: 'cumartesi',
+              7: 'pazar',
+            };
+            return dayMap[e['day']] == dayTrKey &&
+                e['start'] == timeParts[0] &&
+                e['end'] == timeParts[1];
+          });
+        }
+      }
+    }
+
+    final dayNumMap = {
+      'pazartesi': 1,
+      'salı': 2,
+      'çarşamba': 3,
+      'perşembe': 4,
+      'cuma': 5,
+      'cumartesi': 6,
+      'pazar': 7,
+    };
+
+    for (final dayName in selectedDayNames) {
+      final trDay = dayTr[dayName] ?? '';
+      if (trDay.isEmpty) continue;
+
+      final alreadyExists = entries.any((e) {
+        final dayMap = {
+          1: 'pazartesi',
+          2: 'salı',
+          3: 'çarşamba',
+          4: 'perşembe',
+          5: 'cuma',
+          6: 'cumartesi',
+          7: 'pazar',
+        };
+        return dayMap[e['day']] == trDay &&
+            e['start'] == start &&
+            e['end'] == end;
+      });
+
+      if (!alreadyExists) {
+        entries.add({'day': dayNumMap[trDay], 'start': start, 'end': end});
+      }
+    }
+
+    if (entries.isEmpty) return '';
+
+    final Map<String, List<String>> timeTodays = {};
+    final dayNumToTr = {
+      1: 'pazartesi',
+      2: 'salı',
+      3: 'çarşamba',
+      4: 'perşembe',
+      5: 'cuma',
+      6: 'cumartesi',
+      7: 'pazar',
+    };
+
+    for (final e in entries) {
+      final key = '${e['start']}-${e['end']}';
+      final dayTrName = dayNumToTr[e['day']] ?? '';
+      timeTodays.putIfAbsent(key, () => []);
+      if (!timeTodays[key]!.contains(dayTrName)) {
+        timeTodays[key]!.add(dayTrName);
+      }
+    }
+
+    final dayOrder = [
+      'pazartesi',
+      'salı',
+      'çarşamba',
+      'perşembe',
+      'cuma',
+      'cumartesi',
+      'pazar',
+    ];
+    for (final list in timeTodays.values) {
+      list.sort((a, b) => dayOrder.indexOf(a).compareTo(dayOrder.indexOf(b)));
+    }
+
+    final parts = <String>[];
+    timeTodays.forEach((timeRange, days) {
+      if (days.length == 1) {
+        final timeParts = timeRange.split('-');
+        parts.add('${days[0]}:${timeParts[0]}-${timeParts[1]}');
+      } else {
+        final timeParts = timeRange.split('-');
+        parts.add('${days.join('-')},${timeParts[0]}-${timeParts[1]}');
+      }
+    });
+
+    return parts.join(',');
+  }
+
+  void _showAddScheduleModal(Group group) {
+    final List<String> selectedDays = [];
+    TimeOfDay startTime = const TimeOfDay(hour: 9, minute: 0);
+    TimeOfDay endTime = const TimeOfDay(hour: 10, minute: 0);
+    bool isSaving = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            String formatTime(TimeOfDay t) =>
+                '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+            Future<void> pickTime({required bool isStart}) async {
+              final picked = await showTimePicker(
+                context: ctx,
+                initialTime: isStart ? startTime : endTime,
+                builder: (context, child) => MediaQuery(
+                  data: MediaQuery.of(
+                    context,
+                  ).copyWith(alwaysUse24HourFormat: true),
+                  child: child!,
+                ),
+              );
+              if (picked != null) {
+                setModalState(() {
+                  if (isStart) {
+                    startTime = picked;
+                  } else {
+                    endTime = picked;
+                  }
+                });
+              }
+            }
+
+            Future<void> saveSchedule() async {
+              if (selectedDays.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('En az bir gün seçin'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+
+              final startStr = formatTime(startTime);
+              final endStr = formatTime(endTime);
+
+              if (startTime.hour * 60 + startTime.minute >=
+                  endTime.hour * 60 + endTime.minute) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Bitiş saati başlangıçtan sonra olmalı'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+                return;
+              }
+
+              setModalState(() => isSaving = true);
+
+              final newSchedule = _buildScheduleString(
+                group.schedule,
+                selectedDays,
+                startStr,
+                endStr,
+              );
+
+              if (widget.onScheduleUpdated != null) {
+                await widget.onScheduleUpdated!(group.groups_id, newSchedule);
+              }
+
+              setState(() {
+                final idx = _groups.indexWhere(
+                  (g) => g.groups_id == group.groups_id,
+                );
+                if (idx != -1) {
+                  _groups[idx] = Group(
+                    groups_id: group.groups_id,
+                    branches_id: group.branches_id,
+                    coach_id: group.coach_id,
+                    sports_id: group.sports_id,
+                    name: group.name,
+                    schedule: newSchedule,
+                    capacity: group.capacity,
+                    monthly_fee: group.monthly_fee,
+                    is_active: group.is_active,
+                  );
+                }
+                _loadSchedule();
+              });
+
+              if (ctx.mounted) Navigator.pop(ctx);
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Program güncellendi ✓'),
+                  backgroundColor: Color(0xFF22C55E),
+                ),
+              );
+            }
+
+            return Container(
+              decoration: const BoxDecoration(
+                color: _surface,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+              ),
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(ctx).viewInsets.bottom,
+              ),
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 40,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: _border,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: _accent.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: const Icon(
+                              Icons.add_circle_outline,
+                              color: _accent,
+                              size: 22,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Program Ekle',
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                    color: _textPrimary,
+                                  ),
+                                ),
+                                Text(
+                                  group.name,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: _textSecondary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(
+                              Icons.close,
+                              color: _textSecondary,
+                            ),
+                            onPressed: () => Navigator.pop(ctx),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 24),
+                      const Text(
+                        'Günler',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: _textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _days.map((day) {
+                          final isSelected = selectedDays.contains(day);
+                          return GestureDetector(
+                            onTap: () => setModalState(() {
+                              isSelected
+                                  ? selectedDays.remove(day)
+                                  : selectedDays.add(day);
+                            }),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? _accent
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: isSelected ? _accent : _border,
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: Text(
+                                day,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                  color: isSelected
+                                      ? Colors.white
+                                      : _textSecondary,
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 24),
+                      const Text(
+                        'Saat Aralığı',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: _textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () => pickTime(isStart: true),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 14,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: _bg,
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(color: _border),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.access_time,
+                                      size: 18,
+                                      color: _accent,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Başlangıç',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: _textTertiary,
+                                          ),
+                                        ),
+                                        Text(
+                                          formatTime(startTime),
+                                          style: const TextStyle(
+                                            fontSize: 20,
+                                            fontWeight: FontWeight.bold,
+                                            color: _textPrimary,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            child: Text(
+                              '→',
+                              style: TextStyle(
+                                fontSize: 20,
+                                color: _textTertiary,
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () => pickTime(isStart: false),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 14,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: _bg,
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(color: _border),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.access_time_filled,
+                                      size: 18,
+                                      color: _accentDark,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Bitiş',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: _textTertiary,
+                                          ),
+                                        ),
+                                        Text(
+                                          formatTime(endTime),
+                                          style: const TextStyle(
+                                            fontSize: 20,
+                                            fontWeight: FontWeight.bold,
+                                            color: _textPrimary,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 28),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: isSaving ? null : saveSchedule,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _accent,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            elevation: 0,
+                          ),
+                          child: isSaving
+                              ? const SizedBox(
+                                  height: 20,
+                                  width: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Text(
+                                  'Programı Kaydet',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _deleteScheduleEntry(Map<String, dynamic> item) async {
+    final group = _groups.firstWhere(
+      (g) => g.groups_id == item['groupId'],
+      orElse: () => _groups.first,
+    );
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Programı Sil'),
+        content: Text(
+          '${item['groupName']} grubunun ${item['day']} ${item['time']} programı silinsin mi?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('İptal'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: _red),
+            child: const Text('Sil'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    final removeEntry = '${item['day']}:${item['start']}-${item['end']}';
+
+    final newSchedule = _buildScheduleString(
+      group.schedule,
+      [],
+      '',
+      '',
+      removeEntry: removeEntry,
+    );
+
+    if (widget.onScheduleUpdated != null) {
+      await widget.onScheduleUpdated!(group.groups_id, newSchedule);
+    }
+
+    setState(() {
+      final idx = _groups.indexWhere((g) => g.groups_id == group.groups_id);
+      if (idx != -1) {
+        _groups[idx] = Group(
+          groups_id: group.groups_id,
+          branches_id: group.branches_id,
+          coach_id: group.coach_id,
+          sports_id: group.sports_id,
+          name: group.name,
+          schedule: newSchedule,
+          capacity: group.capacity,
+          monthly_fee: group.monthly_fee,
+          is_active: group.is_active,
+        );
+      }
+      _loadSchedule();
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Program silindi'),
+        backgroundColor: Color(0xFF64748B),
+      ),
+    );
   }
 
   @override
@@ -930,14 +836,10 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
           child: _buildDaySelector(),
         ),
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [_buildWeeklyScheduleTab(), _buildTodayStudentsTab()],
-      ),
+      body: _buildWeeklyScheduleTab(),
     );
   }
 
-  // 🔥 GÜN SEÇİCİ (Yatay scroll)
   Widget _buildDaySelector() {
     return Container(
       height: 50,
@@ -985,7 +887,7 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
                       margin: const EdgeInsets.only(left: 6),
                       width: 6,
                       height: 6,
-                      decoration: BoxDecoration(
+                      decoration: const BoxDecoration(
                         color: _accent,
                         shape: BoxShape.circle,
                       ),
@@ -1000,34 +902,12 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
   }
 
   Widget _buildWeeklyScheduleTab() {
-    if (_weeklySchedule.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.calendar_today, size: 64, color: _textTertiary),
-            const SizedBox(height: 16),
-            Text(
-              "Henüz program eklenmemiş",
-              style: TextStyle(color: _textSecondary, fontSize: 16),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              "Excel'de schedule sütununa program ekleyin",
-              style: TextStyle(color: _textTertiary, fontSize: 12),
-            ),
-          ],
-        ),
-      );
-    }
-
     final selectedDayItems = _groupedSchedule[_selectedDay] ?? [];
     final isToday = _selectedDay == _getTodayName();
     final todayDate = isToday ? _getTodayDateTurkish() : "";
 
     return Column(
       children: [
-        // Seçili gün başlığı
         Container(
           padding: const EdgeInsets.all(16),
           color: _surface,
@@ -1063,12 +943,18 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
                     if (isToday && todayDate.isNotEmpty)
                       Text(
                         todayDate,
-                        style: TextStyle(color: _textSecondary, fontSize: 13),
+                        style: const TextStyle(
+                          color: _textSecondary,
+                          fontSize: 13,
+                        ),
                       )
                     else
                       Text(
                         "${selectedDayItems.length} antrenman",
-                        style: TextStyle(color: _textSecondary, fontSize: 13),
+                        style: const TextStyle(
+                          color: _textSecondary,
+                          fontSize: 13,
+                        ),
                       ),
                   ],
                 ),
@@ -1096,7 +982,6 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
           ),
         ),
         const SizedBox(height: 12),
-        // Antrenman listesi
         Expanded(
           child: selectedDayItems.isEmpty
               ? Center(
@@ -1109,126 +994,167 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
                         "Bu günde antrenman yok",
                         style: TextStyle(color: _textSecondary),
                       ),
+                      const SizedBox(height: 16),
+                      OutlinedButton.icon(
+                        onPressed: () => _showGroupPickerForDay(_selectedDay),
+                        icon: const Icon(Icons.add, size: 18),
+                        label: const Text('Program Ekle'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _accent,
+                          side: const BorderSide(color: _accent),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 )
               : ListView.builder(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 80),
                   itemCount: selectedDayItems.length,
                   itemBuilder: (context, index) {
                     final item = selectedDayItems[index];
-                    final groupId = item['groupId'];
-                    final studentCount = _getStudentsInGroup(groupId).length;
 
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      decoration: BoxDecoration(
-                        color: _surface,
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: _border),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.03),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
+                    return Dismissible(
+                      key: Key(
+                        '${item['groupId']}_${item['day']}_${item['time']}',
                       ),
-                      child: Material(
-                        color: Colors.transparent,
-                        child: InkWell(
+                      direction: DismissDirection.endToStart,
+                      background: Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: BoxDecoration(
+                          color: _red,
                           borderRadius: BorderRadius.circular(20),
-                          onTap: () => _showGroupDetail(
-                            groupId,
-                            item['groupName'],
-                            item['time'],
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Row(
-                              children: [
-                                Container(
-                                  width: 52,
-                                  height: 52,
-                                  decoration: BoxDecoration(
-                                    gradient: LinearGradient(
-                                      colors: [_accent, _accentDark],
-                                      begin: Alignment.topLeft,
-                                      end: Alignment.bottomRight,
-                                    ),
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                  child: const Center(
-                                    child: Icon(
-                                      Icons.sports,
-                                      color: Colors.white,
-                                      size: 28,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 16),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        item['groupName'],
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 16,
-                                          color: _textPrimary,
-                                        ),
+                        ),
+                        alignment: Alignment.centerRight,
+                        padding: const EdgeInsets.only(right: 20),
+                        child: const Icon(
+                          Icons.delete_outline,
+                          color: Colors.white,
+                          size: 26,
+                        ),
+                      ),
+                      confirmDismiss: (direction) async {
+                        _deleteScheduleEntry(item);
+                        return false;
+                      },
+                      child: Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: BoxDecoration(
+                          color: _surface,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: _border),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.03),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(20),
+                            onTap: () => _showGroupScheduleOptions(item),
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 52,
+                                    height: 52,
+                                    decoration: BoxDecoration(
+                                      gradient: const LinearGradient(
+                                        colors: [_accent, _accentDark],
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
                                       ),
-                                      const SizedBox(height: 4),
-                                      Row(
-                                        children: [
-                                          Icon(
-                                            Icons.access_time,
-                                            size: 14,
-                                            color: _textSecondary,
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                    child: const Center(
+                                      child: Icon(
+                                        Icons.sports,
+                                        color: Colors.white,
+                                        size: 28,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 16),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          item['groupName'],
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 16,
+                                            color: _textPrimary,
                                           ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            _formatTime(item['time']),
-                                            style: TextStyle(
-                                              color: _accent,
-                                              fontWeight: FontWeight.w500,
-                                              fontSize: 13,
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Row(
+                                          children: [
+                                            const Icon(
+                                              Icons.person,
+                                              size: 12,
+                                              color: _orange,
                                             ),
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Icon(
-                                            Icons.people,
-                                            size: 14,
-                                            color: _textSecondary,
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            "$studentCount öğrenci",
-                                            style: TextStyle(
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              item['coachName'] ?? "Atanmamış",
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                color: _orange,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Row(
+                                          children: [
+                                            const Icon(
+                                              Icons.access_time,
+                                              size: 12,
                                               color: _textSecondary,
-                                              fontSize: 12,
                                             ),
-                                          ),
-                                        ],
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              item['time'],
+                                              style: TextStyle(
+                                                color: _accent,
+                                                fontWeight: FontWeight.w500,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Column(
+                                    children: [
+                                      const Icon(
+                                        Icons.chevron_right,
+                                        color: _accent,
+                                        size: 20,
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        '← sil',
+                                        style: TextStyle(
+                                          fontSize: 9,
+                                          color: _textTertiary,
+                                        ),
                                       ),
                                     ],
                                   ),
-                                ),
-                                Container(
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: BoxDecoration(
-                                    color: _accent.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: const Icon(
-                                    Icons.chevron_right,
-                                    color: _accent,
-                                    size: 20,
-                                  ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
                         ),
@@ -1241,310 +1167,230 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
     );
   }
 
-  void _showGroupDetail(String groupId, String groupName, String time) {
-    final students = _getStudentsInGroup(groupId);
+  void _showGroupScheduleOptions(Map<String, dynamic> item) {
+    final group = _groups.firstWhere(
+      (g) => g.groups_id == item['groupId'],
+      orElse: () => _groups.first,
+    );
 
     showModalBottomSheet(
       context: context,
-      isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => Container(
         decoration: const BoxDecoration(
           color: _surface,
           borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
         ),
-        child: DraggableScrollableSheet(
-          initialChildSize: 0.6,
-          maxChildSize: 0.9,
-          minChildSize: 0.4,
-          expand: false,
-          builder: (_, sc) => Column(
-            children: [
-              const SizedBox(height: 12),
-              Container(
-                width: 40,
-                height: 4,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: _border,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                children: [
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [_accent, _accentDark],
+                      ),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: const Center(
+                      child: Icon(Icons.sports, color: Colors.white, size: 28),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item['groupName'],
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 18,
+                            color: _textPrimary,
+                          ),
+                        ),
+                        Text(
+                          "Antrenör: ${item['coachName'] ?? 'Atanmamış'}",
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: _textSecondary,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Saat: ${item['time']}',
+                          style: const TextStyle(
+                            color: _accent,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: _textSecondary),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(color: _border, height: 1),
+            ListTile(
+              leading: Container(
+                padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: _border,
-                  borderRadius: BorderRadius.circular(2),
+                  color: _accent.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
                 ),
+                child: const Icon(Icons.add, color: _accent),
               ),
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 52,
-                      height: 52,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [_accent, _accentDark],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: const Center(
-                        child: Icon(
-                          Icons.sports,
-                          color: Colors.white,
-                          size: 28,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            groupName,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 18,
-                              color: _textPrimary,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            "Saat: ${_formatTime(time)}",
-                            style: TextStyle(
-                              color: _accent,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close, color: _textSecondary),
-                      onPressed: () => Navigator.pop(ctx),
-                    ),
-                  ],
+              title: const Text(
+                'Bu gruba program ekle',
+                style: TextStyle(fontWeight: FontWeight.w500),
+              ),
+              subtitle: const Text('Yeni gün ve saat ekle'),
+              trailing: const Icon(Icons.chevron_right, color: _textTertiary),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showAddScheduleModal(group);
+              },
+            ),
+            ListTile(
+              leading: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: _red.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
                 ),
+                child: const Icon(Icons.delete_outline, color: _red),
               ),
-              const Divider(color: _border, height: 1),
-              Expanded(
-                child: students.isEmpty
-                    ? const Center(
-                        child: Text(
-                          "Bu grupta öğrenci yok",
-                          style: TextStyle(color: _textSecondary),
-                        ),
-                      )
-                    : ListView.builder(
-                        controller: sc,
-                        padding: const EdgeInsets.all(16),
-                        itemCount: students.length,
-                        itemBuilder: (context, index) {
-                          final student = students[index];
-                          return Container(
-                            margin: const EdgeInsets.only(bottom: 10),
-                            decoration: BoxDecoration(
-                              color: _surfaceLight,
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: ListTile(
-                              leading: Container(
-                                width: 44,
-                                height: 44,
-                                decoration: BoxDecoration(
-                                  color: _accent.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                                child: Center(
-                                  child: Text(
-                                    student.first_name.isNotEmpty
-                                        ? student.first_name[0].toUpperCase()
-                                        : "?",
-                                    style: TextStyle(
-                                      color: _accent,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 18,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              title: Text(
-                                "${student.first_name} ${student.last_name}",
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              subtitle: Text(
-                                student.email,
-                                style: TextStyle(
-                                  color: _textSecondary,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
+              title: const Text(
+                'Bu programı sil',
+                style: TextStyle(fontWeight: FontWeight.w500, color: _red),
               ),
-            ],
-          ),
+              subtitle: Text('${item['day']} ${item['time']}'),
+              trailing: const Icon(Icons.chevron_right, color: _textTertiary),
+              onTap: () {
+                Navigator.pop(ctx);
+                _deleteScheduleEntry(item);
+              },
+            ),
+            const SizedBox(height: 16),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildTodayStudentsTab() {
-    if (_todaysStudents.isEmpty) {
-      return Center(
+  void _showGroupPickerForDay(String day) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: _surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(ctx).size.height * 0.6,
+        ),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.sports, size: 64, color: _textTertiary),
-            const SizedBox(height: 16),
-            Text(
-              "Bugün antrenmanı olan öğrenci yok",
-              style: TextStyle(color: _textSecondary, fontSize: 16),
+            const SizedBox(height: 12),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: _border,
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
-            const SizedBox(height: 8),
-            Text(
-              _getTodayDateTurkish(),
-              style: TextStyle(color: _textTertiary, fontSize: 13),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                children: [
+                  const Text(
+                    'Hangi gruba program eklensin?',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: _textPrimary,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: _textSecondary),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(color: _border, height: 1),
+            Expanded(
+              child: ListView.builder(
+                itemCount: _groups.length,
+                itemBuilder: (ctx2, i) {
+                  final group = _groups[i];
+                  final coachName = _getCoachName(group.coach_id);
+
+                  return ListTile(
+                    leading: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: _accent.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(Icons.sports, color: _accent, size: 20),
+                    ),
+                    title: Text(
+                      group.name,
+                      style: const TextStyle(fontWeight: FontWeight.w500),
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "Antrenör: $coachName",
+                          style: const TextStyle(fontSize: 11, color: _orange),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          group.schedule.isEmpty
+                              ? 'Program yok'
+                              : group.schedule,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                      ],
+                    ),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _showAddScheduleModal(group);
+                    },
+                  );
+                },
+              ),
             ),
           ],
         ),
-      );
-    }
-
-    return Column(
-      children: [
-        // Tarih başlığı
-        Container(
-          padding: const EdgeInsets.all(16),
-          color: _surface,
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: _accent.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Icon(Icons.today, color: _accent, size: 24),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      "Bugün Antrenmanı Olanlar",
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: _textPrimary,
-                      ),
-                    ),
-                    Text(
-                      _getTodayDateTurkish(),
-                      style: TextStyle(color: _textSecondary, fontSize: 13),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: _accent,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  "${_todaysStudents.length} öğrenci",
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: _todaysStudents.length,
-            itemBuilder: (context, index) {
-              final student = _todaysStudents[index];
-              return Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                decoration: BoxDecoration(
-                  color: _surface,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: _border),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.03),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: ListTile(
-                  leading: Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      color: _accent.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Center(
-                      child: Text(
-                        student.first_name.isNotEmpty
-                            ? student.first_name[0].toUpperCase()
-                            : "?",
-                        style: TextStyle(
-                          color: _accent,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 22,
-                        ),
-                      ),
-                    ),
-                  ),
-                  title: Text(
-                    "${student.first_name} ${student.last_name}",
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                    ),
-                  ),
-                  subtitle: Text(
-                    student.email,
-                    style: TextStyle(color: _textSecondary, fontSize: 13),
-                  ),
-                  trailing: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _accent.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Text(
-                      "Bugün",
-                      style: TextStyle(
-                        color: _accent,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
+      ),
     );
   }
 }

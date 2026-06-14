@@ -51,9 +51,9 @@ class _VeliAnaSayfaState extends State<VeliAnaSayfa> {
       final allAttendances = results[2] as List<Attendance>;
 
       stopwatch.stop();
-      print(
+      /* print(
         "⏱️ VeliAnaSayfa verileri PARALEL olarak ${stopwatch.elapsedMilliseconds}ms'de yüklendi",
-      );
+      );*/
 
       List<String> myIds = studentsByParent.map((ps) => ps.student_id).toList();
       List<Users> cocuklarList = [];

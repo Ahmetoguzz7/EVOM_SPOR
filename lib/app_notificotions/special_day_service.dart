@@ -51,11 +51,11 @@ class SpecialDayService {
             await _notification.showBirthdayNotification(fullName);
             _sentNotifications.add(notificationKey);
 
-            print("🎂 Doğum günü bildirimi gönderildi: $fullName");
+            // print Doğum günü bildirimi gönderildi: $fullName");
           }
         }
       } catch (e) {
-        print("Doğum günü kontrol hatası: $e");
+        // printoğum günü kontrol hatası: $e");
       }
     }
   }

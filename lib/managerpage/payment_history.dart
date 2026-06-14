@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:EVOM_SPOR/datapage/data_page/data.dart';
 import 'package:EVOM_SPOR/datapage/fetch_data_page.dart';
-import 'package:url_launcher/url_launcher.dart'; // 🔥 TELEFON ARAMA İÇİN EKLENDİ
+import 'package:url_launcher/url_launcher.dart';
 
 class PaymentReminderScreen extends StatefulWidget {
   const PaymentReminderScreen({Key? key}) : super(key: key);
@@ -17,7 +17,6 @@ class _PaymentReminderScreenState extends State<PaymentReminderScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
-  // 🔥 VERİLER ARTIK WIDGET'TAN DEĞİL, API'DEN GELİYOR
   List<Users> allStudents = [];
   List<Payment> allPayments = [];
   List<Group> allGroups = [];
@@ -32,7 +31,6 @@ class _PaymentReminderScreenState extends State<PaymentReminderScreen>
   String _searchQuery = "";
   final TextEditingController _searchController = TextEditingController();
 
-  // Grup filtresi
   String _selectedGroupFilter = "Tümü";
   List<String> _groupFilterOptions = ["Tümü"];
 
@@ -75,9 +73,6 @@ class _PaymentReminderScreenState extends State<PaymentReminderScreen>
     super.dispose();
   }
 
-  // =========================================================================
-  // 🔥 TELEFON ARAMA FONKSİYONU
-  // =========================================================================
   Future<void> _makePhoneCall(String phoneNumber) async {
     if (phoneNumber.isEmpty) {
       _showSnack("Telefon numarası bulunamadı!", _danger);
@@ -93,9 +88,6 @@ class _PaymentReminderScreenState extends State<PaymentReminderScreen>
     }
   }
 
-  // =========================================================================
-  // 🚀 TÜM VERİLERİ PARALEL OLARAK ÇEK
-  // =========================================================================
   void _loadAllData() {
     setState(() => isLoading = true);
 
@@ -108,8 +100,6 @@ class _PaymentReminderScreenState extends State<PaymentReminderScreen>
       _studentGroupCache.clear();
 
       try {
-        print("🟢 PaymentReminderScreen veriler yükleniyor...");
-
         final results = await Future.wait([
           GoogleSheetService.getStudentsOnlyCached(),
           GoogleSheetService.getPaymentsCached(),
@@ -123,35 +113,19 @@ class _PaymentReminderScreenState extends State<PaymentReminderScreen>
         allGroupStudents = results[3] as List<GroupStudent>;
 
         stopwatch.stop();
-        print(
-          "⏱️ PaymentReminderScreen verileri ${stopwatch.elapsedMilliseconds}ms'de yüklendi",
-        );
-        print(
-          "📊 Öğrenci: ${allStudents.length}, Grup: ${allGroups.length}, İlişki: ${allGroupStudents.length}",
-        );
 
         _buildGroupFilterOptions();
         await _filterStudentsAsync();
 
         if (mounted) setState(() => isLoading = false);
       } catch (e, stackTrace) {
-        print("❌ PaymentReminderScreen yükleme hatası: $e");
-        print(stackTrace);
         if (mounted) setState(() => isLoading = false);
       }
     });
   }
 
-  // =========================================================================
-  // GRUP CACHE
-  // =========================================================================
   void _loadGroupCache() {
     _studentGroupCache.clear();
-
-    print("=== GRUP CACHE YENİLENİYOR ===");
-    print("Toplam öğrenci: ${allStudents.length}");
-    print("Toplam groupStudent: ${allGroupStudents.length}");
-    print("Toplam grup: ${allGroups.length}");
 
     for (var student in allStudents) {
       if (student.role.trim().toLowerCase() != "student") continue;
@@ -182,18 +156,12 @@ class _PaymentReminderScreenState extends State<PaymentReminderScreen>
         _studentGroupCache[student.app] = group.name.isNotEmpty
             ? group.name
             : "Grup Yok";
-        print("✅ ${student.first_name} ${student.last_name} -> ${group.name}");
       } else {
         _studentGroupCache[student.app] = "Grup Yok";
       }
     }
-
-    print("✅ Grup cache oluşturuldu: ${_studentGroupCache.length} öğrenci");
   }
 
-  // =========================================================================
-  // GRUP FİLTRE SEÇENEKLERİ OLUŞTUR
-  // =========================================================================
   void _buildGroupFilterOptions() {
     final groupNames = allGroups
         .map((g) => g.name)
@@ -202,7 +170,6 @@ class _PaymentReminderScreenState extends State<PaymentReminderScreen>
         .toList();
     groupNames.sort();
     _groupFilterOptions = ["Tümü", ...groupNames];
-    print("📋 Grup filtre seçenekleri: ${_groupFilterOptions.length}");
   }
 
   String _getStudentGroup(String studentId) =>
@@ -309,9 +276,6 @@ class _PaymentReminderScreenState extends State<PaymentReminderScreen>
     }
   }
 
-  // =========================================================================
-  // SADECE "unpaid" VE SADECE STUDENT ROLÜ
-  // =========================================================================
   Future<void> _filterStudentsAsync() async {
     _feeCache.clear();
     _paidCache.clear();
@@ -360,15 +324,8 @@ class _PaymentReminderScreenState extends State<PaymentReminderScreen>
         _applyFilter();
       });
     }
-
-    print(
-      "📊 Ödemeyen öğrenciler: 1-14: ${first.length}, 15-31: ${second.length}",
-    );
   }
 
-  // =========================================================================
-  // ÖDEME DURUM HESABI
-  // =========================================================================
   String _getPaymentStatusForMonth(String studentId, DateTime month) {
     final fee = _getStudentMonthlyFee(studentId);
     final paid = _getStudentTotalPaidForMonth(studentId, month);
@@ -450,9 +407,6 @@ class _PaymentReminderScreenState extends State<PaymentReminderScreen>
     return double.tryParse(student.amount) ?? 0;
   }
 
-  // =========================================================================
-  // BİLDİRİM GÖNDERİMİ
-  // =========================================================================
   Future<void> _sendReminder(Users student) async {
     if (student.role.trim().toLowerCase() != "student") {
       _showSnack("❌ Sadece öğrencilere hatırlatma gönderilebilir!", _danger);
@@ -585,9 +539,6 @@ class _PaymentReminderScreenState extends State<PaymentReminderScreen>
         : "—";
   }
 
-  // =========================================================================
-  // KART TASARIMI (TELEFON NUMARASI EKLENDİ)
-  // =========================================================================
   Widget _buildStudentCard(Users s) {
     final fee = _getCachedFee(s.app);
     final groupName = _getStudentGroup(s.app);
@@ -613,6 +564,7 @@ class _PaymentReminderScreenState extends State<PaymentReminderScreen>
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Container(
               width: 42,
@@ -634,6 +586,7 @@ class _PaymentReminderScreenState extends State<PaymentReminderScreen>
             ),
             const SizedBox(width: 10),
             Expanded(
+              flex: 3,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -714,7 +667,6 @@ class _PaymentReminderScreenState extends State<PaymentReminderScreen>
                       ),
                     ],
                   ),
-                  // 🔥 TELEFON NUMARASI SATIRI EKLENDİ
                   if (s.phone.isNotEmpty) ...[
                     const SizedBox(height: 4),
                     GestureDetector(
@@ -927,9 +879,6 @@ class _PaymentReminderScreenState extends State<PaymentReminderScreen>
     );
   }
 
-  // =========================================================================
-  // BUILD
-  // =========================================================================
   @override
   Widget build(BuildContext context) {
     final monthName = _getMonthShort(_selectedDate.month);
@@ -1097,19 +1046,23 @@ class _PaymentReminderScreenState extends State<PaymentReminderScreen>
                                     items: _groupFilterOptions.map((name) {
                                       return DropdownMenuItem(
                                         value: name,
-                                        child: Text(
-                                          name,
-                                          style: TextStyle(
-                                            color: name == _selectedGroupFilter
-                                                ? _accent
-                                                : _textPrimary,
-                                            fontSize: 11,
-                                            fontWeight:
-                                                name == _selectedGroupFilter
-                                                ? FontWeight.w700
-                                                : FontWeight.normal,
+                                        child: SizedBox(
+                                          width: double.infinity,
+                                          child: Text(
+                                            name,
+                                            style: TextStyle(
+                                              color:
+                                                  name == _selectedGroupFilter
+                                                  ? _accent
+                                                  : _textPrimary,
+                                              fontSize: 11,
+                                              fontWeight:
+                                                  name == _selectedGroupFilter
+                                                  ? FontWeight.w700
+                                                  : FontWeight.normal,
+                                            ),
+                                            overflow: TextOverflow.ellipsis,
                                           ),
-                                          overflow: TextOverflow.ellipsis,
                                         ),
                                       );
                                     }).toList(),
@@ -1278,5 +1231,22 @@ class _PaymentReminderScreenState extends State<PaymentReminderScreen>
         ),
       ),
     );
+  }
+
+  // 🔥 Geçmiş ay için default ödeme tarihini hesapla (o ayın 15'i)
+  DateTime _getDefaultDueDate(DateTime selectedMonth) {
+    // Seçilen ayın 15'i
+    DateTime defaultDate = DateTime(
+      selectedMonth.year,
+      selectedMonth.month,
+      15,
+    );
+
+    // Eğer 15 geçersizse (örneğin Şubat 29 çekmiyorsa) ayın son gününü al
+    if (defaultDate.day != 15) {
+      defaultDate = DateTime(selectedMonth.year, selectedMonth.month + 1, 0);
+    }
+
+    return defaultDate;
   }
 }

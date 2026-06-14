@@ -22,24 +22,29 @@ class DekontServisi {
     // 2. Sayfa İçeriğini Oluştur
     pdf.addPage(
       pw.Page(
-      
         build: (pw.Context context) {
           return pw.Container(
             padding: const pw.EdgeInsets.all(20),
-           
+
             child: pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
                 pw.Center(
                   child: pw.Text(
                     "ODEME DEKONTU",
-                    style: pw.TextStyle(fontSize: 26, fontWeight: pw.FontWeight.bold),
+                    style: pw.TextStyle(
+                      fontSize: 26,
+                      fontWeight: pw.FontWeight.bold,
+                    ),
                   ),
                 ),
                 pw.SizedBox(height: 30),
                 pw.Divider(color: PdfColors.grey),
                 pw.SizedBox(height: 20),
-                pw.Text("Sayin Yetkili,", style: const pw.TextStyle(fontSize: 14)),
+                pw.Text(
+                  "Sayin Yetkili,",
+                  style: const pw.TextStyle(fontSize: 14),
+                ),
                 pw.SizedBox(height: 15),
                 pw.Text(
                   "$tcNo T.C. Kimlik numarasina sahip $ogrenciAdi isimli ogrencinin aidati, "
@@ -50,8 +55,15 @@ class DekontServisi {
                 pw.Row(
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
-                    pw.Text("Islem Tarihi: ${DateTime.now().day}.${DateTime.now().month}.${DateTime.now().year}"),
-                    pw.Text("Imza/Onay", style: const pw.TextStyle(decoration: pw.TextDecoration.underline)),
+                    pw.Text(
+                      "Islem Tarihi: ${DateTime.now().day}.${DateTime.now().month}.${DateTime.now().year}",
+                    ),
+                    pw.Text(
+                      "Imza/Onay",
+                      style: const pw.TextStyle(
+                        decoration: pw.TextDecoration.underline,
+                      ),
+                    ),
                   ],
                 ),
               ],

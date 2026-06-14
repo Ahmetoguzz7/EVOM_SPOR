@@ -88,13 +88,10 @@ class _StudentActivationScreenState extends State<StudentActivationScreen> {
       try {
         final users = await GoogleSheetService.getUsersCached();
         allStudents = users;
-        print("✅ Öğrenciler: ${allStudents.length}");
 
         allGroups = await GoogleSheetService.getGroupsCached();
-        print("✅ Gruplar: ${allGroups.length}");
 
         allGroupStudents = await GoogleSheetService.getGroupStudentsCached();
-        print("✅ Grup-Öğrenci: ${allGroupStudents.length}");
 
         _buildGroupFilterOptions();
         _loadGroupCache();
@@ -102,8 +99,8 @@ class _StudentActivationScreenState extends State<StudentActivationScreen> {
 
         if (mounted) setState(() => isLoading = false);
       } catch (e, stackTrace) {
-        print("❌ Yükleme hatası: $e");
-        print(stackTrace);
+        print("Yükleme hatası: $e");
+
         if (mounted) setState(() => isLoading = false);
       }
     });

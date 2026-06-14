@@ -1,5 +1,6 @@
+import 'package:EVOM_SPOR/core/app_repository.dart';
+import 'package:EVOM_SPOR/ptpage/studetnweeklyprogram.dart';
 import 'package:flutter/material.dart';
-import 'package:carousel_slider/carousel_slider.dart';
 import 'package:EVOM_SPOR/datapage/data_page/data.dart';
 import 'package:EVOM_SPOR/main.dart';
 import 'package:EVOM_SPOR/parent/parent_page.dart';
@@ -9,6 +10,7 @@ import 'package:EVOM_SPOR/ptpage/student_pay.dart/student_pay.dart';
 import 'package:EVOM_SPOR/unifiedLoginPage.dart';
 import 'package:EVOM_SPOR/userInterfacepage/notifications/pt_natifications.dart';
 import 'package:EVOM_SPOR/datapage/fetch_data_page.dart';
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
@@ -22,9 +24,11 @@ class UserInterface extends StatefulWidget {
 }
 
 class _UserInterfaceState extends State<UserInterface> {
-  // State değişkenleri
+  final AppRepository _repo = AppRepository();
+
   bool _isLoading = true;
   String? _error;
+  String _loadingMessage = "Veriler hazırlanıyor...";
 
   bool _isParent = false;
   List<Users> _bagliCocuklar = [];
@@ -33,107 +37,137 @@ class _UserInterfaceState extends State<UserInterface> {
   List<Payment> _allPayments = [];
   List<Group> _allGroups = [];
   List<GroupStudent> _allRelations = [];
+  List<Group> _todaysGroups = [];
+  String _todayName = "";
 
-  // Carousel için index
-  int _currentChildIndex = 0;
+  // BİLDİRİMLER İÇİN DEĞİŞKENLER
+  List<Notifications> _recentNotifications = [];
+  int _unreadNotificationCount = 0;
+  bool _notificationsLoaded = false;
+
+  List<ParentStudent> _parentStudents = [];
 
   @override
   void initState() {
     super.initState();
-    _loadAllDataInBackground();
+    _loadDataFromRepository();
   }
 
-  // 🔥 TÜM VERİLERİ ARKA PLANDA YÜKLE (Sayfa hemen açılır)
-  Future<void> _loadAllDataInBackground() async {
+  // 🚀 HIZLANDIRILMIŞ: Repository'den direkt veri çek
+  Future<void> _loadDataFromRepository() async {
     try {
+      setState(() {
+        _loadingMessage = "Veri bağlantısı kuruluyor...";
+      });
+
+      if (!_repo.isLoaded) {
+        await _repo.loadCriticalData(
+          onProgress: (p) {
+            if (mounted) {
+              setState(() {
+                if (p < 0.3)
+                  _loadingMessage = "Kullanıcı bilgileri alınıyor...";
+                else if (p < 0.6)
+                  _loadingMessage = "Grup ve ödemeler yükleniyor...";
+                else if (p < 0.9)
+                  _loadingMessage = "Bildirimler hazırlanıyor...";
+                else
+                  _loadingMessage = "Veriler düzenleniyor...";
+              });
+            }
+          },
+          onMessage: (msg) {
+            if (mounted) setState(() => _loadingMessage = msg);
+          },
+        );
+      }
+
+      setState(() => _loadingMessage = "Profil bilgileriniz yükleniyor...");
+
+      _parentStudents = await GoogleSheetService.getParentStudents();
+
       final isParent =
           widget.user.role.toLowerCase() == 'parent' ||
           widget.user.role.toLowerCase() == 'veli';
 
-      List<Users> bagliCocuklar = [];
       Users? bagliVeli;
+      List<Users> bagliCocuklar = [];
       Coach? currentCoach;
-      List<Payment> allPayments = [];
-      List<Group> allGroups = [];
-      List<GroupStudent> allRelations = [];
-
-      // 🔥 PARALEL YÜKLEME - ÇOK HIZLI ⚡
-      final results = await Future.wait([
-        GoogleSheetService.getPaymentsCached(),
-        GoogleSheetService.getGroupsCached(),
-        GoogleSheetService.getGroupStudentsCached(),
-        GoogleSheetService.getCoachesCached(),
-        GoogleSheetService.getUsersCached(),
-        GoogleSheetService.getParentStudents(),
-      ]);
-
-      allPayments = results[0] as List<Payment>;
-      allGroups = results[1] as List<Group>;
-      allRelations = results[2] as List<GroupStudent>;
-      final coaches = results[3] as List<Coach>;
-      final allUsers = results[4] as List<Users>;
-      final parentStudentList = results[5] as List<ParentStudent>;
-
-      // Antrenör bilgisi
-      currentCoach = coaches.firstWhere(
-        (c) => c.user_id == widget.user.app,
-        orElse: () => Coach(
-          coach_id: "",
-          user_id: "",
-          branches_id: "",
-          sports_id: "",
-          bio: "",
-          certificate_info: "",
-          monthly_salary: "",
-          hired_at: "",
-        ),
-      );
 
       if (isParent) {
-        // Veli için çocukları bul
-        final myStudentIds = parentStudentList
-            .where((ps) => ps.parent_id == widget.user.app)
-            .map((ps) => ps.student_id)
-            .toList();
-
-        if (myStudentIds.isNotEmpty) {
-          bagliCocuklar = allUsers
-              .where((u) => myStudentIds.contains(u.app))
-              .toList();
-        }
-      } else {
-        // Öğrenci için veliyi bul
-        final link = parentStudentList.firstWhere(
-          (ps) => ps.student_id == widget.user.app,
-          orElse: () => ParentStudent(
-            parent_student_id: "",
-            parent_id: "",
-            student_id: "",
-          ),
+        setState(
+          () => _loadingMessage = "Çocuklarınızın bilgileri getiriliyor...",
         );
-
-        if (link.parent_id.isNotEmpty) {
-          bagliVeli = allUsers.firstWhere(
-            (u) => u.app == link.parent_id,
-            orElse: () => Users(
-              app: "",
-              branches_id: "",
-              first_name: "",
-              last_name: "",
-              email: "",
-              phone: "",
-              password_hash: "",
-              role: "",
-              profile_photo_url: "",
-              amount: "",
-              b_date: "",
-              created_at: "",
-              last_login: "",
-              is_active: "",
-            ),
-          );
-        }
+        bagliCocuklar = _repo.getChildrenByParentId(
+          widget.user.app,
+          _parentStudents,
+        );
+        currentCoach = null;
+      } else {
+        setState(
+          () => _loadingMessage = "Antrenör bilgileriniz getiriliyor...",
+        );
+        currentCoach = _repo.getCoachByStudentId(widget.user.app);
+        bagliVeli = _repo.getParentByStudentId(
+          widget.user.app,
+          _parentStudents,
+        );
       }
+
+      setState(() => _loadingMessage = "Antrenman programınız hazırlanıyor...");
+      final myGroups = _repo.getGroupsByStudentId(widget.user.app);
+
+      _todayName = _getTodayName();
+      _todaysGroups = myGroups.where((group) {
+        return group.schedule.contains(_todayName);
+      }).toList();
+
+      _todaysGroups.sort((a, b) {
+        final aTime = _getGroupStartTime(a, _todayName);
+        final bTime = _getGroupStartTime(b, _todayName);
+        return _timeToMinutes(aTime).compareTo(_timeToMinutes(bTime));
+      });
+
+      final myPayments = _repo.getPaymentsByStudentId(widget.user.app);
+
+      _allPayments = _repo.allPayments;
+      _allGroups = _repo.allGroups;
+      _allRelations = _repo.allGroupStudents;
+
+      // ANA SAYFA İÇİN FİLTRELENMİŞ BİLDİRİMLER (SADECE SON 7 GÜN)
+      setState(() => _loadingMessage = "Duyurularınız hazırlanıyor...");
+      final allFilteredNotifications = _getFilteredNotificationsForStudent();
+
+      // SADECE SON 7 GÜN FİLTRESİ
+      final sevenDaysAgo = DateTime.now().subtract(const Duration(days: 7));
+      final filteredByDate = allFilteredNotifications.where((notif) {
+        if (notif.sent_at.isEmpty || notif.sent_at == 'null') {
+          return false;
+        }
+        DateTime? notifDate = DateTime.tryParse(notif.sent_at);
+        if (notifDate == null) {
+          try {
+            final parts = notif.sent_at.split('.');
+            if (parts.length == 3) {
+              notifDate = DateTime(
+                int.parse(parts[2].split(' ')[0]),
+                int.parse(parts[1]),
+                int.parse(parts[0]),
+              );
+            }
+          } catch (_) {
+            return false;
+          }
+        }
+        if (notifDate == null) return false;
+        return notifDate.isAfter(sevenDaysAgo);
+      }).toList();
+
+      _recentNotifications = filteredByDate.take(3).toList();
+      _unreadNotificationCount = filteredByDate
+          .where((n) => n.is_read?.toLowerCase() != "true")
+          .length;
+      _notificationsLoaded = true;
 
       if (mounted) {
         setState(() {
@@ -141,14 +175,17 @@ class _UserInterfaceState extends State<UserInterface> {
           _bagliCocuklar = bagliCocuklar;
           _bagliVeli = bagliVeli;
           _currentCoach = currentCoach;
-          _allPayments = allPayments;
-          _allGroups = allGroups;
-          _allRelations = allRelations;
           _isLoading = false;
         });
       }
+
+      print(
+        "✅ Öğrenci sayfası yüklendi: ${widget.user.first_name}, Grup: ${myGroups.length}, Bugün: ${_todaysGroups.length} antrenman, Bildirim: ${_recentNotifications.length}",
+      );
+
+      _repo.preloadProfilePhotosAsync(context);
     } catch (e) {
-      print("Veri yükleme hatası: $e");
+      print("❌ Öğrenci sayfası hatası: $e");
       if (mounted) {
         setState(() {
           _error = e.toString();
@@ -158,143 +195,223 @@ class _UserInterfaceState extends State<UserInterface> {
     }
   }
 
+  // FİLTRELENMİŞ BİLDİRİMLER (ÖĞRENCİ İÇİN)
+  List<Notifications> _getFilteredNotificationsForStudent() {
+    final kullaniciId = widget.user.app.toString().trim().toLowerCase();
+    final kullaniciRole = widget.user.role.toLowerCase();
+
+    final myGroups = _repo.getGroupsByStudentId(widget.user.app);
+    final myGroupIds = myGroups.map((g) => g.groups_id).toSet();
+
+    final myCoach = _repo.getCoachByStudentId(widget.user.app);
+    final myCoachUserId =
+        myCoach?.user_id.toString().trim().toLowerCase() ?? '';
+
+    final isStudent = kullaniciRole == 'student' || kullaniciRole == 'öğrenci';
+
+    final filtered = _repo.allNotifications.where((d) {
+      final recipientId = d.recipient_id?.toString().trim().toLowerCase() ?? '';
+      final senderId = d.sender_id?.toString().trim().toLowerCase() ?? '';
+      final groupId = d.groups_id?.toString().trim() ?? '';
+
+      if (senderId == kullaniciId) return false;
+      if (recipientId == 'all' || recipientId == 'tümü') return true;
+      if (recipientId == kullaniciId) return true;
+      if (isStudent && groupId.isNotEmpty && myGroupIds.contains(groupId))
+        return true;
+      if (isStudent && myCoachUserId.isNotEmpty && senderId == myCoachUserId)
+        return true;
+
+      return false;
+    }).toList();
+
+    filtered.sort((a, b) {
+      final dateA = DateTime.tryParse(a.sent_at ?? '') ?? DateTime(2000);
+      final dateB = DateTime.tryParse(b.sent_at ?? '') ?? DateTime(2000);
+      return dateB.compareTo(dateA);
+    });
+
+    return filtered;
+  }
+
+  // ANA SAYFADA GÖSTERİLECEK BİLDİRİM KARTI (KÜÇÜLTÜLMÜŞ)
+  Widget _buildNotificationCardForHome(Notifications notif) {
+    bool isUrgent = notif.type?.toLowerCase() == "urgent";
+    bool isUnread = notif.is_read?.toLowerCase() != "true";
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: isUnread ? Colors.blue.shade50 : Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: isUrgent
+            ? Border.all(color: Colors.red.shade200, width: 1)
+            : (isUnread
+                  ? Border.all(color: Colors.blue.shade200, width: 1)
+                  : null),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 3,
+            height: 32,
+            decoration: BoxDecoration(
+              color: isUrgent
+                  ? Colors.red
+                  : (isUnread ? Colors.blue : Colors.grey),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: _getIconColorForNotif(notif.type).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              _getIconForNotif(notif.type),
+              color: _getIconColorForNotif(notif.type),
+              size: 18,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        notif.title,
+                        style: TextStyle(
+                          fontWeight: isUnread
+                              ? FontWeight.w600
+                              : FontWeight.w500,
+                          fontSize: 12,
+                          color: isUrgent
+                              ? Colors.red.shade800
+                              : Colors.black87,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (isUrgent)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade100,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text(
+                          "Acil",
+                          style: TextStyle(
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.red,
+                          ),
+                        ),
+                      ),
+                    if (isUnread && !isUrgent)
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: Colors.blue,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  notif.message,
+                  style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _formatRelativeDateTurkish(notif.sent_at),
+                  style: TextStyle(fontSize: 9, color: Colors.grey[400]),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  IconData _getIconForNotif(String? type) {
+    switch (type?.toLowerCase()) {
+      case 'payment_reminder':
+        return Icons.account_balance_wallet;
+      case 'urgent':
+        return Icons.priority_high;
+      case 'announcement':
+        return Icons.emoji_events;
+      case 'attendance_alert':
+        return Icons.cancel;
+      default:
+        return Icons.notifications;
+    }
+  }
+
+  Color _getIconColorForNotif(String? type) {
+    switch (type?.toLowerCase()) {
+      case 'payment_reminder':
+        return Colors.orange;
+      case 'urgent':
+        return Colors.red;
+      case 'announcement':
+        return Colors.green;
+      case 'attendance_alert':
+        return Colors.purple;
+      default:
+        return Colors.blue;
+    }
+  }
+
+  String _formatRelativeDateTurkish(String? dateStr) {
+    if (dateStr == null || dateStr.isEmpty) return "Şimdi";
+    try {
+      final date = DateTime.parse(dateStr);
+      final now = DateTime.now();
+      final diff = now.difference(date);
+      if (diff.inDays > 30) {
+        return DateFormat('dd MMM yyyy', 'tr_TR').format(date);
+      }
+      if (diff.inDays > 0) {
+        return diff.inDays == 1 ? "Dün" : "${diff.inDays} gün önce";
+      }
+      if (diff.inHours > 0) {
+        return "${diff.inHours} saat önce";
+      }
+      if (diff.inMinutes > 0) {
+        return "${diff.inMinutes} dakika önce";
+      }
+      return "Az önce";
+    } catch (e) {
+      return dateStr;
+    }
+  }
+
   Future<void> _refreshData() async {
-    GoogleSheetService.invalidateAllCache();
     setState(() {
       _isLoading = true;
       _error = null;
     });
-    await _loadAllDataInBackground();
-  }
 
-  Future<void> _openNotificationsPage(BuildContext context) async {
-    if (!context.mounted) return;
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => DuyurularPage(
-          currentUser: widget.user,
-          currentCoach: _currentCoach,
-        ),
-      ),
-    );
-  }
-
-  // 🔥 DÜZELTİLMİŞ FOTOĞRAF METODU (CachedNetworkImage ile)
-  Widget _buildProfileImage(String? imageUrl, double size, Users user) {
-    if (imageUrl != null && imageUrl.isNotEmpty) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: CachedNetworkImage(
-          imageUrl: imageUrl,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          placeholder: (context, url) => Container(
-            width: size,
-            height: size,
-            color: Colors.grey.shade200,
-            child: Center(
-              child: SizedBox(
-                width: size * 0.3,
-                height: size * 0.3,
-                child: const CircularProgressIndicator(strokeWidth: 2),
-              ),
-            ),
-          ),
-          errorWidget: (context, url, error) => _buildDefaultAvatar(user, size),
-        ),
-      );
-    } else {
-      return _buildDefaultAvatar(user, size);
-    }
-  }
-
-  // 🔥 Varsayılan Avatar (İsmin ilk harfi)
-  Widget _buildDefaultAvatar(Users user, double size) {
-    String initial = user.first_name.isNotEmpty
-        ? user.first_name[0].toUpperCase()
-        : "?";
-
-    return Container(
-      width: size,
-      height: size,
-      color: Colors.indigo.shade100,
-      child: Center(
-        child: Text(
-          initial,
-          style: TextStyle(
-            fontSize: size * 0.4,
-            fontWeight: FontWeight.bold,
-            color: Colors.indigo.shade700,
-          ),
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF1F5F9),
-
-      body: _isLoading
-          ? _buildLoadingScreen()
-          : _error != null
-          ? _buildErrorScreen()
-          : RefreshIndicator(
-              onRefresh: _refreshData,
-
-              child: CustomScrollView(
-                slivers: [
-                  SliverAppBar(
-                    expandedHeight: _isParent ? 220 : 200,
-                    // expandedHeight: _isParent ? 200 : 180,
-                    floating: false,
-                    pinned: true,
-                    backgroundColor: Colors.white,
-                    elevation: 0,
-                    leading: IconButton(
-                      icon: const Icon(Icons.logout, color: Colors.redAccent),
-                      onPressed: _logout,
-                    ),
-                    //Boşluk bırak
-                    title: const SizedBox.shrink(), // Boş title
-                    // 🔥 SAĞ TARAFTA DA BUTON YOKSA BOŞLUK
-                    // Boşluk için actions'a boş bir widget ekle
-                    actions: [
-                      const SizedBox(width: 48), // Logout butonuna denk boşluk
-                    ],
-
-                    // Logout butonu kadar boşluk
-                    // Logout butonu kadar boşluk
-                    flexibleSpace: FlexibleSpaceBar(
-                      background: _isParent
-                          ? _buildParentHeader()
-                          : _buildStudentHeader(),
-                    ),
-                  ),
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          /* if (_isParent && _bagliCocuklar.isNotEmpty)
-                            _buildChildrenCarousel(),
-                          if (!_isParent && _bagliVeli != null)
-                            _buildSwitchToParentButton(),*/
-                          const SizedBox(height: 16),
-                          _buildMenuGrid(),
-                          const SizedBox(height: 30),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-    );
+    await _repo.refreshAllData();
+    await _loadDataFromRepository();
   }
 
   Future<void> _logout() async {
@@ -311,6 +428,23 @@ class _UserInterfaceState extends State<UserInterface> {
       );
     }
   }
+
+  Future<void> _openNotificationsPage(BuildContext context) async {
+    if (!context.mounted) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DuyurularPage(
+          currentUser: widget.user,
+          currentCoach: _currentCoach,
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // 🎨 UI BİLEŞENLERİ
+  // ============================================================
 
   Widget _buildLoadingScreen() {
     return Container(
@@ -359,7 +493,7 @@ class _UserInterfaceState extends State<UserInterface> {
             ),
             const SizedBox(height: 24),
             const Text(
-              " EVOM SPOR - Öğrenci / Antrenör Girişi",
+              " EVOM SPOR",
               style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
@@ -378,7 +512,7 @@ class _UserInterfaceState extends State<UserInterface> {
             ),
             const SizedBox(height: 16),
             Text(
-              "Profiliniz Yükleniyor...",
+              _loadingMessage,
               style: TextStyle(color: Colors.grey[400], fontSize: 13),
             ),
           ],
@@ -436,6 +570,57 @@ class _UserInterfaceState extends State<UserInterface> {
     );
   }
 
+  Widget _buildProfileImage(String? imageUrl, double size, Users user) {
+    if (imageUrl != null && imageUrl.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: CachedNetworkImage(
+          imageUrl: imageUrl,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          placeholder: (context, url) => Container(
+            width: size,
+            height: size,
+            color: Colors.grey.shade200,
+            child: Center(
+              child: SizedBox(
+                width: size * 0.3,
+                height: size * 0.3,
+                child: const CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          ),
+          errorWidget: (context, url, error) => _buildDefaultAvatar(user, size),
+        ),
+      );
+    } else {
+      return _buildDefaultAvatar(user, size);
+    }
+  }
+
+  Widget _buildDefaultAvatar(Users user, double size) {
+    String initial = user.first_name.isNotEmpty
+        ? user.first_name[0].toUpperCase()
+        : "?";
+
+    return Container(
+      width: size,
+      height: size,
+      color: Colors.indigo.shade100,
+      child: Center(
+        child: Text(
+          initial,
+          style: TextStyle(
+            fontSize: size * 0.4,
+            fontWeight: FontWeight.bold,
+            color: Colors.indigo.shade700,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildParentHeader() {
     return Container(
       decoration: const BoxDecoration(
@@ -458,7 +643,6 @@ class _UserInterfaceState extends State<UserInterface> {
             children: [
               Row(
                 children: [
-                  // KARE FOTOĞRAF
                   _buildProfileImage(
                     widget.user.profile_photo_url,
                     90,
@@ -550,7 +734,6 @@ class _UserInterfaceState extends State<UserInterface> {
             children: [
               Row(
                 children: [
-                  // KARE FOTOĞRAF
                   _buildProfileImage(
                     widget.user.profile_photo_url,
                     90,
@@ -667,241 +850,221 @@ class _UserInterfaceState extends State<UserInterface> {
     );
   }
 
-  Widget _buildChildrenCarousel() {
-    return Column(
-      children: [
-        CarouselSlider(
-          options: CarouselOptions(
-            height: 120,
-            enlargeCenterPage: true,
-            enableInfiniteScroll: false,
-            onPageChanged: (index, _) {
-              setState(() => _currentChildIndex = index);
-            },
-          ),
-          items: _bagliCocuklar.map((child) => _buildChildCard(child)).toList(),
-        ),
-        const SizedBox(height: 12),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: _bagliCocuklar.asMap().entries.map((entry) {
-            return Container(
-              width: 8,
-              height: 8,
-              margin: const EdgeInsets.symmetric(horizontal: 4),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.orange.withOpacity(
-                  _currentChildIndex == entry.key ? 1 : 0.3,
-                ),
-              ),
-            );
-          }).toList(),
-        ),
-        const SizedBox(height: 12),
-        if (_bagliCocuklar.isNotEmpty)
-          _buildChildDashboard(_bagliCocuklar[_currentChildIndex]),
-      ],
-    );
-  }
-
-  Widget _buildChildCard(Users child) {
+  Widget _buildTodayTrainingCard() {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 8),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF1E293B), Color(0xFF0F172A)],
-        ),
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.orange.withOpacity(0.2),
-            blurRadius: 15,
-            spreadRadius: 2,
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          // KARE FOTOĞRAF
-          _buildProfileImage(child.profile_photo_url, 60, child),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Text(
-                  "SPORCU",
-                  style: TextStyle(
-                    color: Colors.white54,
-                    fontSize: 11,
-                    letterSpacing: 2,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  "${child.first_name} ${child.last_name}".toUpperCase(),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  "ID: ${child.app}",
-                  style: const TextStyle(color: Colors.white70, fontSize: 11),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildChildDashboard(Users child) {
-    // Çocuğun ödeme bilgilerini hesapla
-    final childPayments = _allPayments
-        .where((p) => p.student_id == child.app)
-        .toList();
-    final paidAmount = childPayments.fold<double>(
-      0,
-      (sum, p) => sum + (double.tryParse(p.amount) ?? 0),
-    );
-    final monthlyFee = double.tryParse(child.amount) ?? 0;
-    final isPaid = monthlyFee > 0 && paidAmount >= monthlyFee;
-
-    return Container(
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: 20),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10),
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            "${child.first_name} Özeti",
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          const Row(
+            children: [
+              Icon(Icons.sports, color: Colors.orange, size: 20),
+              SizedBox(width: 8),
+              Text(
+                "🏃 Bugünkü Antrenman Programım",
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+              ),
+            ],
           ),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _buildInfoCard(
-                  "Aylık Ücret",
-                  "${monthlyFee.toStringAsFixed(0)} TL",
-                  Icons.payments,
-                  Colors.orange,
-                ),
+          if (_todaysGroups.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey.shade200),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildInfoCard(
-                  "Aidat Durumu",
-                  isPaid ? "Ödendi" : "Ödenmedi",
-                  isPaid ? Icons.check_circle : Icons.warning_amber,
-                  isPaid ? Colors.green : Colors.red,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoCard(
-    String title,
-    String value,
-    IconData icon,
-    Color color,
-  ) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.05),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: color.withOpacity(0.2)),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, size: 24, color: color),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          Text(title, style: TextStyle(fontSize: 10, color: Colors.grey[600])),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSwitchToParentButton() {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: InkWell(
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => UserInterface(user: _bagliVeli!)),
-          );
-        },
-        borderRadius: BorderRadius.circular(20),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFF1E293B), Color(0xFF0F172A)],
-            ),
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 10),
-            ],
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.family_restroom, color: Colors.orange, size: 28),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      "Bağlı Veli Hesabı",
-                      style: TextStyle(color: Colors.white70, fontSize: 12),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.info_outline,
+                    color: Colors.grey.shade500,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      "$_todayName günü antrenman programınız bulunmamaktadır.\nİyi dinlenmeler! 🏋️",
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                        fontSize: 13,
+                      ),
                     ),
-                    Text(
-                      "${_bagliVeli!.first_name} ${_bagliVeli!.last_name}",
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
+                  ),
+                ],
+              ),
+            )
+          else
+            ..._todaysGroups.map((group) {
+              final scheduleToday = _getGroupScheduleForDay(group, _todayName);
+              final coach = _repo.getCoachById(group.coach_id);
+              final coachName = coach != null
+                  ? _repo.getUserById(coach.user_id)?.first_name ?? "Antrenör"
+                  : "Antrenör";
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.teal.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.teal.shade200),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: Colors.teal.shade100,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.group,
+                        size: 22,
+                        color: Colors.teal,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            group.name,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            "Antrenör: $coachName",
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.teal.shade100,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        scheduleToday,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.teal.shade700,
+                        ),
                       ),
                     ),
                   ],
                 ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
+  // BİLDİRİMLER BÖLÜMÜ (FİLTRE BUTONSUZ - SADECE SON 7 GÜN)
+  Widget _buildNotificationsSection() {
+    if (_recentNotifications.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.blue.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.campaign, size: 16, color: Colors.blue.shade700),
+              const SizedBox(width: 6),
+              Text(
+                "Son 7 Günün Duyuruları",
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.blue.shade700,
+                ),
               ),
-              const Icon(
-                Icons.arrow_forward_ios,
-                color: Colors.orange,
-                size: 16,
-              ),
+              const Spacer(),
+              if (_unreadNotificationCount > 0) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade100,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    "$_unreadNotificationCount",
+                    style: TextStyle(
+                      fontSize: 9,
+                      color: Colors.red.shade700,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
-        ),
+          const SizedBox(height: 8),
+          ..._recentNotifications.map(
+            (notif) => _buildNotificationCardForHome(notif),
+          ),
+          const SizedBox(height: 6),
+          GestureDetector(
+            onTap: () => _openNotificationsPage(context),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Text(
+                  "Tüm duyuruları gör",
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: Colors.blue.shade600,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                Icon(
+                  Icons.arrow_forward,
+                  size: 10,
+                  color: Colors.blue.shade600,
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -967,6 +1130,17 @@ class _UserInterfaceState extends State<UserInterface> {
                 ),
               ),
             ),
+            _buildMenuCard(
+              "Haftalık Program",
+              Icons.calendar_month,
+              Colors.teal,
+              () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => StudentWeeklyProgram(student: widget.user),
+                ),
+              ),
+            ),
           ],
         ),
       ],
@@ -1015,5 +1189,104 @@ class _UserInterfaceState extends State<UserInterface> {
         ),
       ),
     );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF1F5F9),
+      body: _isLoading
+          ? _buildLoadingScreen()
+          : _error != null
+          ? _buildErrorScreen()
+          : RefreshIndicator(
+              onRefresh: _refreshData,
+              child: CustomScrollView(
+                slivers: [
+                  SliverAppBar(
+                    expandedHeight: _isParent ? 220 : 200,
+                    floating: false,
+                    pinned: true,
+                    backgroundColor: Colors.white,
+                    elevation: 0,
+                    leading: IconButton(
+                      icon: const Icon(Icons.logout, color: Colors.redAccent),
+                      onPressed: _logout,
+                    ),
+                    title: const SizedBox.shrink(),
+                    actions: [const SizedBox(width: 48)],
+                    flexibleSpace: FlexibleSpaceBar(
+                      background: _isParent
+                          ? _buildParentHeader()
+                          : _buildStudentHeader(),
+                    ),
+                  ),
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(height: 16),
+                          if (!_isParent) _buildTodayTrainingCard(),
+                          if (_notificationsLoaded &&
+                              _recentNotifications.isNotEmpty)
+                            _buildNotificationsSection(),
+                          _buildMenuGrid(),
+                          const SizedBox(height: 30),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+    );
+  }
+
+  // ============================================================
+  // 📅 YARDIMCI METODLAR
+  // ============================================================
+
+  String _getTodayName() {
+    const days = [
+      "Pazartesi",
+      "Salı",
+      "Çarşamba",
+      "Perşembe",
+      "Cuma",
+      "Cumartesi",
+      "Pazar",
+    ];
+    final now = DateTime.now();
+    return days[now.weekday - 1];
+  }
+
+  String _getGroupScheduleForDay(Group group, String dayName) {
+    final schedule = group.schedule;
+    final pattern = RegExp('$dayName:(\\d{2}:\\d{2})-(\\d{2}:\\d{2})');
+    final match = pattern.firstMatch(schedule);
+    if (match != null) {
+      return "${match.group(1)} - ${match.group(2)}";
+    }
+    return "Saat belirtilmemiş";
+  }
+
+  String _getGroupStartTime(Group group, String dayName) {
+    final schedule = group.schedule;
+    final pattern = RegExp('$dayName:(\\d{2}:\\d{2})-(\\d{2}:\\d{2})');
+    final match = pattern.firstMatch(schedule);
+    if (match != null) {
+      return match.group(1) ?? "00:00";
+    }
+    return "23:59";
+  }
+
+  int _timeToMinutes(String time) {
+    final parts = time.split(':');
+    if (parts.length == 2) {
+      return int.parse(parts[0]) * 60 + int.parse(parts[1]);
+    }
+    return 0;
   }
 }

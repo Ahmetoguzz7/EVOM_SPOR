@@ -47,7 +47,6 @@ class _DuyurularPageState extends State<DuyurularPage> {
   // 🔥 TÜRKÇE TARİH FONKSİYONLARI
   // =========================================================================
 
-  // Tarihi "dd MMMM yyyy HH:mm" formatında göster (örn: 15 Ocak 2025 14:30)
   String _formatDateLongTurkish(String dateStr) {
     if (dateStr.isEmpty) return "Belirsiz";
     try {
@@ -59,7 +58,6 @@ class _DuyurularPageState extends State<DuyurularPage> {
     }
   }
 
-  // Tarihi "dd MMM yyyy" formatında göster (örn: 15 Oca 2025)
   String _formatDateShortTurkish(String dateStr) {
     if (dateStr.isEmpty) return "Belirsiz";
     try {
@@ -71,7 +69,6 @@ class _DuyurularPageState extends State<DuyurularPage> {
     }
   }
 
-  // Göreceli tarih (bugün, dün, 5 gün önce, 2 saat önce...)
   String _formatRelativeDateTurkish(String? dateStr) {
     if (dateStr == null || dateStr.isEmpty) return "Şimdi";
     try {
@@ -85,7 +82,7 @@ class _DuyurularPageState extends State<DuyurularPage> {
       }
       if (diff.inDays > 0) {
         if (diff.inDays == 1) return "Dün";
-        return "${diff.inDays} gün önce";
+        return "${diff.inDays} geomagnetic gün önce";
       }
       if (diff.inHours > 0) {
         return "${diff.inHours} saat önce";
@@ -99,7 +96,6 @@ class _DuyurularPageState extends State<DuyurularPage> {
     }
   }
 
-  // Sadece "dd/MM/yyyy" formatı
   String _formatDateOnlyTurkish(String dateStr) {
     if (dateStr.isEmpty) return "Belirsiz";
     try {
@@ -111,72 +107,39 @@ class _DuyurularPageState extends State<DuyurularPage> {
     }
   }
 
-  // 🔥 CACHE'Lİ YÜKLEME + BİLDİRİM KONTROLÜ
   Future<List<Notifications>> _loadNotifications() async {
-    // Tüm duyuruları cache'den çek
-    final allNotifications = await GoogleSheetService.getNotifications(
-      userId: widget.currentUser.app,
-    );
+    final String currentUserIdStr = widget.currentUser.app.toString().trim();
 
-    // Kullanıcının gruplarını cache'den bul
-    List<String> userGroups = [];
+    // fetch_data_page içindeki 4 bildirim bulan zırhlı fonksiyonu çağırıyoruz
+    final List<Map<String, dynamic>> rawFilteredMaps =
+        await GoogleSheetService.getNotificationsForUser(currentUserIdStr);
 
-    if (widget.currentCoach != null &&
-        widget.currentCoach!.coach_id.isNotEmpty) {
-      final groups = await GoogleSheetService.getGroupsByCoachCached(
-        widget.currentCoach!.coach_id,
+    final List<Notifications> filteredNotifications = rawFilteredMaps.map((
+      item,
+    ) {
+      return Notifications(
+        notifications_id: item['notifications_id']?.toString() ?? '',
+        sender_id: item['sender_id']?.toString() ?? '',
+        recipient_id: item['recipient_id']?.toString() ?? '',
+        groups_id: item['groups_id']?.toString() ?? '',
+        title: item['title']?.toString() ?? '',
+        message: item['message']?.toString() ?? '',
+        type: item['type']?.toString() ?? 'announcement',
+        is_read: item['is_read']?.toString() ?? 'FALSE',
+        sent_at: item['sent_at']?.toString() ?? '',
       );
-      userGroups = groups.map((g) => g.groups_id.toString()).toList();
-    } else {
-      final groupRelations =
-          await GoogleSheetService.getGroupStudentsByStudentIdCached(
-            widget.currentUser.app,
-          );
-      userGroups = groupRelations
-          .where((rel) => rel.is_active.toString().toUpperCase() == "TRUE")
-          .map((rel) => rel.groups_id.toString())
-          .toList();
-    }
-
-    // Filtrele
-    final filtered = allNotifications.where((d) {
-      final recipientId = d.recipient_id?.toString() ?? "";
-
-      // Herkese açık
-      if (recipientId == "all" ||
-          recipientId == "Tümü" ||
-          recipientId == "ALL") {
-        return true;
-      }
-
-      // Gruba özel
-      if (recipientId.isNotEmpty && userGroups.contains(recipientId)) {
-        return true;
-      }
-
-      return false;
     }).toList();
 
-    // Tarihe göre sırala (en yeni en üstte)
-    final sorted = filtered
-      ..sort((a, b) {
-        final dateA = _parseDate(a.sent_at);
-        final dateB = _parseDate(b.sent_at);
-        return dateB.compareTo(dateA);
-      });
+    await _checkAndSendNotifications(filteredNotifications);
 
-    // 🔔 YENİ DUYURULARI KONTROL ET VE BİLDİRİM GÖNDER
-    await _checkAndSendNotifications(sorted);
-
-    // Seçilen filtreye göre tarih bazlı filtrele
-    return _filterByDate(sorted);
+    // Tarih süzgecine gönder
+    return _filterByDate(filteredNotifications);
   }
 
   // 🚀 YENİ DUYURULAR İÇİN BİLDİRİM GÖNDER
   Future<void> _checkAndSendNotifications(
     List<Notifications> currentNotifications,
   ) async {
-    // Daha önce gösterilen duyuruların ID'lerini al
     final previousIds = _previousNotifications
         .map((n) => n.notifications_id)
         .toSet();
@@ -184,18 +147,15 @@ class _DuyurularPageState extends State<DuyurularPage> {
         .map((n) => n.notifications_id)
         .toSet();
 
-    // Yeni eklenen duyuruları bul
     final newNotificationIds = currentIds.difference(previousIds);
     final newNotifications = currentNotifications
         .where((n) => newNotificationIds.contains(n.notifications_id))
         .toList();
 
-    // Okunmamış duyuruları da kontrol et
     final unreadNotifications = currentNotifications
         .where((n) => n.is_read?.toLowerCase() != "true")
         .toList();
 
-    // Tüm yeni ve okunmamış duyurular için bildirim gönder
     final notificationsToSend = {
       ...newNotifications,
       ...unreadNotifications,
@@ -205,7 +165,6 @@ class _DuyurularPageState extends State<DuyurularPage> {
       final notificationId =
           "${duyuru.notifications_id}_${widget.currentUser.app}";
 
-      // Sadece okunmamış duyurular için bildirim gönder
       if (duyuru.is_read?.toLowerCase() != "true") {
         await _notificationService.showNotification(
           id: notificationId,
@@ -217,7 +176,6 @@ class _DuyurularPageState extends State<DuyurularPage> {
       }
     }
 
-    // Önceki listeyi güncelle
     _previousNotifications = List.from(currentNotifications);
   }
 
@@ -239,45 +197,59 @@ class _DuyurularPageState extends State<DuyurularPage> {
   String _getNotificationBody(Notifications duyuru) {
     String message = duyuru.message;
     if (message.length > 100) {
-      message = message.substring(0, 100) + '...';
+      message = '${message.substring(0, 100)}...';
     }
     return message;
   }
 
-  List<Notifications> _filterByDate(List<Notifications> notifications) {
+  List<Notifications> _filterByDate(List<Notifications> list) {
+    if (_selectedFilter == "Tümü") return list;
+
     final now = DateTime.now();
-    final cutoffDate = _getCutoffDate(now);
+    Duration limit;
 
-    if (_selectedFilter == "Tümü") {
-      return notifications;
-    }
-
-    return notifications.where((n) {
-      final date = _parseDate(n.sent_at);
-      return date.isAfter(cutoffDate);
-    }).toList();
-  }
-
-  DateTime _getCutoffDate(DateTime now) {
     switch (_selectedFilter) {
       case "Son 7 gün":
-        return now.subtract(const Duration(days: 7));
+        limit = const Duration(days: 7);
+        break;
       case "Son 30 gün":
-        return now.subtract(const Duration(days: 30));
+        limit = const Duration(days: 30);
+        break;
       case "Son 3 ay":
-        return now.subtract(const Duration(days: 90));
+        limit = const Duration(days: 90);
+        break;
       default:
-        return DateTime(2000);
+        return list;
     }
-  }
 
-  DateTime _parseDate(String? dateStr) {
-    if (dateStr == null || dateStr.isEmpty) return DateTime(2000);
-    try {
-      return DateTime.parse(dateStr);
-    } catch (e) {
-      return DateTime(2000);
-    }
+    final cutoff = now.subtract(limit);
+
+    return list.where((notif) {
+      if (notif.sent_at.isEmpty || notif.sent_at == 'null') {
+        return true; // Tarihi boş olan test verilerini ekrandan silme, göster!
+      }
+
+      // Farklı tarih formatlarını (GG.AA.YYYY veya YYYY-AA-GG) tolere etmek için güvenli parse
+      DateTime? notifDate = DateTime.tryParse(notif.sent_at);
+      if (notifDate == null) {
+        try {
+          // Eğer GG.AA.YYYY formatındaysa manuel parçala
+          final parts = notif.sent_at.split('.');
+          if (parts.length == 3) {
+            notifDate = DateTime(
+              int.parse(parts[2].split(' ')[0]), // Yıl
+              int.parse(parts[1]), // Ay
+              int.parse(parts[0]), // Gün
+            );
+          }
+        } catch (_) {
+          return true; // Tarih formatı bozuksa bile bildirimi kaybetme, listele!
+        }
+      }
+
+      if (notifDate == null) return true;
+      return notifDate.isAfter(cutoff);
+    }).toList();
   }
 
   Future<void> _markAsRead(Notifications duyuru) async {
@@ -288,7 +260,6 @@ class _DuyurularPageState extends State<DuyurularPage> {
       widget.currentUser.app,
     );
 
-    // Cache'i temizle ve yeniden yükle
     GoogleSheetService.invalidateCache('notifications');
     setState(() {
       _notificationsFuture = _loadNotifications();
@@ -318,7 +289,6 @@ class _DuyurularPageState extends State<DuyurularPage> {
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         actions: [
-          // 🔄 YENİLEME BUTONU
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () {
@@ -328,7 +298,6 @@ class _DuyurularPageState extends State<DuyurularPage> {
               });
             },
           ),
-          // Filtre menüsü
           PopupMenuButton<String>(
             icon: const Icon(Icons.filter_list),
             onSelected: _changeFilter,
@@ -419,7 +388,6 @@ class _DuyurularPageState extends State<DuyurularPage> {
             },
             child: Column(
               children: [
-                // Filtre bilgisi
                 Container(
                   margin: const EdgeInsets.symmetric(
                     horizontal: 16,
@@ -493,6 +461,10 @@ class _DuyurularPageState extends State<DuyurularPage> {
 
   Widget _buildDuyuruCard(Notifications duyuru) {
     bool isUnread = duyuru.is_read?.toLowerCase() != "true";
+    bool hasGroup =
+        duyuru.groups_id != null &&
+        duyuru.groups_id!.isNotEmpty &&
+        duyuru.groups_id != 'null';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -523,7 +495,6 @@ class _DuyurularPageState extends State<DuyurularPage> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // İkon
                 Container(
                   width: 50,
                   height: 50,
@@ -538,7 +509,6 @@ class _DuyurularPageState extends State<DuyurularPage> {
                   ),
                 ),
                 const SizedBox(width: 14),
-                // İçerik
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -577,6 +547,38 @@ class _DuyurularPageState extends State<DuyurularPage> {
                       const SizedBox(height: 8),
                       Row(
                         children: [
+                          // 🔥 GRUP ETİKETİ EKLENDİ
+                          if (hasGroup)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.purple.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.group,
+                                    size: 10,
+                                    color: Colors.purple,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    "Grup Duyurusu",
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: Colors.purple,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          if (hasGroup) const SizedBox(width: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 8,

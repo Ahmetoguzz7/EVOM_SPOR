@@ -366,7 +366,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       final allUsers = results[2] as List<Users>;
       final allPayments = results[3] as List<Payment>;
       stopwatch.stop();
-      print(
+      print
         "⏱️ PaymentScreen verileri PARALEL olarak ${stopwatch.elapsedMilliseconds}ms'de yüklendi",
       );
       final current = allUsers.firstWhere(
@@ -444,15 +444,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
           }
         }
       }
-      print("📋 Fee update geçmişi: ${_feeUpdateHistory.length} kayıt");
-      print("📌 Override edilen aylar: ${_feeOverrides.length}");
+      print Fee update geçmişi: ${_feeUpdateHistory.length} kayıt");
+      print Override edilen aylar: ${_feeOverrides.length}");
       return {
         'monthlyFee': monthlyFee,
         'currentYear': _currentYear,
         'previousYear': _previousYear,
       };
     } catch (e) {
-      print("❌ PaymentScreen veri yükleme hatası: $e");
+      print PaymentScreen veri yükleme hatası: $e");
       return {
         'monthlyFee': 0.0,
         'currentYear': _currentYear,
@@ -3176,9 +3176,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
       final allUsers = results[2] as List<Users>;
       final allPayments = results[3] as List<Payment>;
       stopwatch.stop();
-      print(
+      /* print
         "⏱️ PaymentScreen verileri PARALEL olarak ${stopwatch.elapsedMilliseconds}ms'de yüklendi",
-      );
+      );*/
       final current = allUsers.firstWhere(
         (u) => u.app == widget.student.app,
         orElse: () => widget.student,
@@ -3254,15 +3254,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
           }
         }
       }
-      print("📋 Fee update geçmişi: ${_feeUpdateHistory.length} kayıt");
-      print("📌 Override edilen aylar: ${_feeOverrides.length}");
+      //print Fee update geçmişi: ${_feeUpdateHistory.length} kayıt");
+      // print Override edilen aylar: ${_feeOverrides.length}");
       return {
         'monthlyFee': monthlyFee,
         'currentYear': _currentYear,
         'previousYear': _previousYear,
       };
     } catch (e) {
-      print("❌ PaymentScreen veri yükleme hatası: $e");
+      // print PaymentScreen veri yükleme hatası: $e");
       return {
         'monthlyFee': 0.0,
         'currentYear': _currentYear,
@@ -3295,10 +3295,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
             ),
             ListTile(
               leading: const Icon(Icons.history, color: _orange),
-              title: const Text("Geçmişe Yönelik (Çoklu Ay)"),
-              subtitle: const Text(
-                "Sadece seçilen ayların ücretini değiştirir",
-              ),
+              title: const Text("Geçmişe Yönelik"),
+              subtitle: const Text("Sadece seçilen ayın ücretini değiştirir"),
               onTap: () => Navigator.pop(context, "past"),
             ),
           ],
@@ -3335,7 +3333,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
               children: [
                 Icon(Icons.edit, color: _teal),
                 SizedBox(width: 8),
-                Text('Gelecek Aylar İçin Ücret Güncelle'),
+                Text('Gelecek Aylar İçin\nÜcret Güncelle'),
               ],
             ),
             content: Column(
@@ -3497,7 +3495,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
               children: [
                 Icon(Icons.history_edu, color: _teal),
                 SizedBox(width: 8),
-                Text('Geçmiş Aylar İçin Toplu Ücret Düzeltme'),
+                Text('Geçmiş Aylar İçin\nToplu Ücret Düzeltme'),
               ],
             ),
             content: SingleChildScrollView(
@@ -3541,7 +3539,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                       child: Column(
                         children: [
                           const Text(
-                            "Ayları Seçin (Birden fazla seçebilirsiniz)",
+                            "Değiştirmek İstediğinz Ayı Seçin ",
                             style: TextStyle(fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 12),
@@ -3740,15 +3738,37 @@ class _PaymentScreenState extends State<PaymentScreen> {
   // =========================================================================
   // ÖDEME İŞLEMLERİ
   // =========================================================================
-  Future<void> _selectPaymentDateForMissingMonth(DateTime missingMonth) async {
-    final first = DateTime(missingMonth.year, missingMonth.month, 1);
-    final last = DateTime(missingMonth.year, missingMonth.month + 1, 0);
+  Future<void> _selectPaymentDateForMissingMonth(
+    DateTime missingMonth, {
+    bool isMonthOver = false,
+  }) async {
+    final firstDay = DateTime(missingMonth.year, missingMonth.month, 1);
+    final lastDay = DateTime(missingMonth.year, missingMonth.month + 1, 0);
+
+    // 🔥 SADECE GEÇMİŞ AYLAR İÇİN default 15
+    DateTime initialDate;
+    if (isMonthOver) {
+      // Geçmiş ay: default olarak ayın 15'ini al (eğer geçerli değilse son günü al)
+      try {
+        initialDate = DateTime(missingMonth.year, missingMonth.month, 15);
+        if (initialDate.day != 15) {
+          initialDate = lastDay;
+        }
+      } catch (e) {
+        initialDate = firstDay;
+      }
+    } else {
+      // Cari ay: bugünü göster
+      initialDate = selectedPaymentDate;
+    }
+
     final picked = await showDatePicker(
       context: context,
-      initialDate: first,
-      firstDate: first,
-      lastDate: last,
-      helpText: 'Tarih Seç',
+      initialDate: initialDate,
+      firstDate: firstDay,
+      lastDate: lastDay,
+      helpText:
+          'Ödeme Tarihi Seç (${_getMonthNameTurkish(missingMonth.month)} ${missingMonth.year})',
       cancelText: 'İptal',
       confirmText: 'Tamam',
       fieldHintText: 'gg/aa/yyyy',
@@ -3756,6 +3776,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       errorFormatText: 'Geçersiz format',
       errorInvalidText: 'Geçersiz tarih',
     );
+
     if (picked != null) {
       setState(() {
         selectedPaymentDate = picked;
@@ -3836,115 +3857,401 @@ class _PaymentScreenState extends State<PaymentScreen> {
     final monthName = (month != null && year != null)
         ? _getMonthNameTurkish(month) + " $year"
         : "—";
+
     showDialog(
       context: context,
-      builder: (_) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        child: Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: _surface,
-            borderRadius: BorderRadius.circular(24),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
+      builder: (_) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return Dialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: _surface,
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: _teal.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Icon(Icons.receipt_long, color: _teal, size: 22),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: _teal.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Icon(Icons.receipt_long, color: _teal, size: 22),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              "Ödeme Detayı",
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                            Text(
+                              monthName,
+                              style: TextStyle(
+                                color: _textSecondary,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.close, color: _textSub),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          "Ödeme Detayı",
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
+                  const SizedBox(height: 16),
+                  const Divider(),
+                  const SizedBox(height: 12),
+                  _popupRow(
+                    Icons.attach_money,
+                    "Tutar",
+                    "${double.tryParse(p.amount)?.toStringAsFixed(0) ?? p.amount} TL",
+                    _green,
+                  ),
+                  _popupRow(
+                    Icons.calendar_today,
+                    "Ödeme Tarihi",
+                    _formatDateFromString(p.paid_date),
+                    _teal,
+                  ),
+                  _popupRow(Icons.date_range, "Ay", monthName, _teal),
+                  _popupRow(
+                    p.payment_method == "Nakit"
+                        ? Icons.money
+                        : p.payment_method == "Kredi Kartı"
+                        ? Icons.credit_card
+                        : Icons.account_balance,
+                    "Yöntem",
+                    p.payment_method,
+                    _orange,
+                  ),
+                  if (p.note.isNotEmpty &&
+                      !p.note.contains("FEE_UPDATE:") &&
+                      !p.note.contains("OVERRIDE:"))
+                    _popupRow(Icons.note_alt_outlined, "Not", p.note, _textSub),
+                  if (p.note.contains("FEE_UPDATE:"))
+                    _popupRow(Icons.update, "Ücret Güncelleme", p.note, _teal),
+                  if (p.note.contains("OVERRIDE:"))
+                    _popupRow(
+                      Icons.edit,
+                      "Ücret Düzeltme (Override)",
+                      p.note,
+                      _orange,
+                    ),
+                  const SizedBox(height: 16),
+
+                  // 🔥 DÜZENLEME VE SİLME BUTONLARI
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _showEditPaymentDialog(p);
+                          },
+                          icon: const Icon(Icons.edit, size: 18),
+                          label: const Text("Düzenle"),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: _teal,
+                            side: BorderSide(color: _teal),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                           ),
                         ),
-                        Text(
-                          monthName,
-                          style: TextStyle(color: _textSecondary, fontSize: 13),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => _confirmDeletePayment(p),
+                          icon: const Icon(Icons.delete_outline, size: 18),
+                          label: const Text("Sil"),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: _red,
+                            side: BorderSide(color: _red),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                  IconButton(
-                    icon: Icon(Icons.close, color: _textSub),
-                    onPressed: () => Navigator.pop(context),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _teal,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      child: const Text(
+                        "Kapat",
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
-              const Divider(),
-              const SizedBox(height: 12),
-              _popupRow(
-                Icons.attach_money,
-                "Tutar",
-                "${double.tryParse(p.amount)?.toStringAsFixed(0) ?? p.amount} TL",
-                _green,
-              ),
-              _popupRow(
-                Icons.calendar_today,
-                "Ödeme Tarihi",
-                _formatDateFromString(p.paid_date),
-                _teal,
-              ),
-              _popupRow(Icons.date_range, "Ay", monthName, _teal),
-              _popupRow(
-                p.payment_method == "Nakit"
-                    ? Icons.money
-                    : p.payment_method == "Kredi Kartı"
-                    ? Icons.credit_card
-                    : Icons.account_balance,
-                "Yöntem",
-                p.payment_method,
-                _orange,
-              ),
-              if (p.note.isNotEmpty &&
-                  !p.note.contains("FEE_UPDATE:") &&
-                  !p.note.contains("OVERRIDE:"))
-                _popupRow(Icons.note_alt_outlined, "Not", p.note, _textSub),
-              if (p.note.contains("FEE_UPDATE:"))
-                _popupRow(Icons.update, "Ücret Güncelleme", p.note, _teal),
-              if (p.note.contains("OVERRIDE:"))
-                _popupRow(
-                  Icons.edit,
-                  "Ücret Düzeltme (Override)",
-                  p.note,
-                  _orange,
-                ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pop(context),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _teal,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                  ),
-                  child: const Text(
-                    "Kapat",
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
+  }
+
+  // 🔥 ÖDEME DÜZENLEME DİYALOĞU
+  void _showEditPaymentDialog(Payment payment) async {
+    final amountCtrl = TextEditingController(text: payment.amount);
+    final noteCtrl = TextEditingController(text: payment.note);
+    String selectedMethodEdit = payment.payment_method;
+    DateTime selectedDateEdit =
+        _parseDateString(payment.paid_date) ?? DateTime.now();
+    bool isSaving = false;
+
+    // Önce grupları kontrol et
+    if (studentGroups.isEmpty) {
+      final allGroups = await GoogleSheetService.getGroupsCached();
+      final allRelations = await GoogleSheetService.getGroupStudentsCached();
+      final groupIds = allRelations
+          .where(
+            (r) => r.student_id == widget.student.app && r.is_active == "TRUE",
+          )
+          .map((r) => r.groups_id)
+          .toList();
+      studentGroups = allGroups
+          .where((g) => groupIds.contains(g.groups_id))
+          .toList();
+      if (studentGroups.isNotEmpty) {
+        selectedGroupId = studentGroups.first.groups_id;
+        selectedGroupName = studentGroups.first.name;
+      }
+    }
+
+    showDialog(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+            ),
+            title: const Row(
+              children: [
+                Icon(Icons.edit, color: _teal),
+                SizedBox(width: 8),
+                Text("Ödemeyi Düzenle", style: TextStyle(fontSize: 18)),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Grup seçimi (eğer birden fazla grup varsa)
+                  if (studentGroups.length > 1)
+                    DropdownButtonFormField<String>(
+                      value: selectedGroupId,
+                      decoration: const InputDecoration(
+                        labelText: "Grup",
+                        border: OutlineInputBorder(),
+                      ),
+                      items: studentGroups.map((g) {
+                        return DropdownMenuItem(
+                          value: g.groups_id,
+                          child: Text(g.name),
+                        );
+                      }).toList(),
+                      onChanged: (v) =>
+                          setDialogState(() => selectedGroupId = v),
+                    ),
+                  const SizedBox(height: 12),
+                  // Tutar
+                  TextField(
+                    controller: amountCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: "Tutar (TL)",
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.money),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // Ödeme Yöntemi
+                  DropdownButtonFormField<String>(
+                    value: selectedMethodEdit,
+                    items: paymentMethods.map((m) {
+                      return DropdownMenuItem(value: m, child: Text(m));
+                    }).toList(),
+                    onChanged: (v) =>
+                        setDialogState(() => selectedMethodEdit = v!),
+                    decoration: const InputDecoration(
+                      labelText: "Ödeme Yöntemi",
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // Tarih seçimi
+                  InkWell(
+                    onTap: () async {
+                      final picked = await showDatePicker(
+                        context: context,
+                        initialDate: selectedDateEdit,
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime.now(),
+                      );
+                      if (picked != null) {
+                        setDialogState(() => selectedDateEdit = picked);
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 16,
+                      ),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: _borderLight),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.calendar_today, color: _teal),
+                          const SizedBox(width: 12),
+                          Text(_formatDateTurkish(selectedDateEdit)),
+                          const Spacer(),
+                          Icon(Icons.arrow_drop_down, color: _textSub),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // Not
+                  TextField(
+                    controller: noteCtrl,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      labelText: "Not (Opsiyonel)",
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("İptal"),
+              ),
+              ElevatedButton(
+                onPressed: isSaving
+                    ? null
+                    : () async {
+                        setDialogState(() => isSaving = true);
+
+                        final updateData = {
+                          "amount": amountCtrl.text.trim(),
+                          "payment_method": selectedMethodEdit,
+                          "paid_date": _formatDateForDB(selectedDateEdit),
+                          "note": noteCtrl.text.trim(),
+                        };
+
+                        if (selectedGroupId != null &&
+                            studentGroups.length > 1) {
+                          updateData["groups_id"] = selectedGroupId!;
+                        }
+
+                        final success = await GoogleSheetService.updatePayment(
+                          payment.payments_id,
+                          updateData,
+                        );
+
+                        setDialogState(() => isSaving = false);
+
+                        if (success && mounted) {
+                          Navigator.pop(context);
+                          setState(() {
+                            _allDataFuture = _loadAllDataParallel();
+                          });
+                          _showSnackBar("✅ Ödeme güncellendi!");
+                        } else {
+                          _showSnackBar(
+                            "❌ Güncelleme başarısız!",
+                            isError: true,
+                          );
+                        }
+                      },
+                style: ElevatedButton.styleFrom(backgroundColor: _teal),
+                child: isSaving
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text("Kaydet"),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // 🔥 ÖDEME SİLME ONAYI
+  void _confirmDeletePayment(Payment payment) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text("Ödemeyi Sil", style: TextStyle(color: _red)),
+        content: Text(
+          "${_formatDateFromString(payment.paid_date)} tarihli ${payment.amount} TL ödeme silinecek. Devam etmek istiyor musunuz?",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("İptal"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: _red),
+            child: const Text("Sil"),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    final success = await GoogleSheetService.deletePayment(payment.payments_id);
+
+    if (success && mounted) {
+      setState(() {
+        _allDataFuture = _loadAllDataParallel();
+      });
+      _showSnackBar("✅ Ödeme silindi!");
+    } else {
+      _showSnackBar("❌ Silme başarısız!", isError: true);
+    }
+  }
+
+  String _formatDateForDB(DateTime date) {
+    return "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
   }
 
   Widget _popupRow(IconData icon, String label, String value, Color color) {
@@ -3985,7 +4292,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
   // Telefon arama fonksiyonu
   Future<void> _makePhoneCall() async {
     final phone = widget.student.phone;
-    if (phone == null || phone.isEmpty) {
+    if (phone.isEmpty) {
       _showSnackBar("Telefon numarası mevcut değil", isError: true);
       return;
     }
@@ -4641,12 +4948,23 @@ class _PaymentScreenState extends State<PaymentScreen> {
     String monthName,
     Color color,
   ) {
+    final isMonthOver = color == _red; // Geçmiş ay kontrolü
+
     return GestureDetector(
-      onTap: () => setState(() {
-        _selectedMissingMonth = date;
-        amountController.clear();
-        noteController.clear();
-      }),
+      onTap: () {
+        // 🔥 ÖNCE DEFAULT TARİHİ AYARLA
+        if (isMonthOver) {
+          selectedPaymentDate = _getDefaultPaymentDate(date);
+        } else {
+          selectedPaymentDate = DateTime.now();
+        }
+
+        setState(() {
+          _selectedMissingMonth = date;
+          amountController.clear();
+          noteController.clear();
+        });
+      },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
@@ -4703,6 +5021,16 @@ class _PaymentScreenState extends State<PaymentScreen> {
     final isMonthOver = missingMonth['isMonthOver'] as bool;
     final headerColor = isMonthOver ? _red : _orange;
 
+    // 🔥 GEÇMİŞ AY İÇİN DEFAULT TARİHİ AYIN 15'İ YAP
+    if (isMonthOver && _selectedMissingMonth == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {
+            selectedPaymentDate = _getDefaultPaymentDate(date);
+          });
+        }
+      });
+    }
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -4767,7 +5095,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
           ),
           const SizedBox(height: 20),
           InkWell(
-            onTap: () => _selectPaymentDateForMissingMonth(date),
+            onTap: () => _selectPaymentDateForMissingMonth(
+              date,
+              isMonthOver: isMonthOver,
+            ),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
               decoration: BoxDecoration(
@@ -5625,5 +5956,31 @@ class _PaymentScreenState extends State<PaymentScreen> {
         ],
       ),
     );
+  }
+
+  // 🔥 Geçmiş ay için default ödeme tarihini hesapla (o ayın 15'i)
+  DateTime _getDefaultDueDate(DateTime selectedMonth) {
+    // Seçilen ayın 15'i
+    DateTime defaultDate = DateTime(
+      selectedMonth.year,
+      selectedMonth.month,
+      15,
+    );
+
+    // Eğer 15 geçersizse (örneğin Şubat 29 çekmiyorsa) ayın son gününü al
+    if (defaultDate.day != 15) {
+      defaultDate = DateTime(selectedMonth.year, selectedMonth.month + 1, 0);
+    }
+
+    return defaultDate;
+  }
+
+  DateTime _getDefaultPaymentDate(DateTime forMonth) {
+    try {
+      return DateTime(forMonth.year, forMonth.month, 15);
+    } catch (e) {
+      // 15 geçerli değilse (Şubat 29 vs) ayın son gününü al
+      return DateTime(forMonth.year, forMonth.month + 1, 0);
+    }
   }
 }

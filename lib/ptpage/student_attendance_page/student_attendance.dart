@@ -162,7 +162,7 @@ class _StudentAttendancePageState extends State<StudentAttendancePage>
           weekly[weekKey]!["missed"] = weekly[weekKey]!["missed"]! + 1;
         }
       } catch (e) {
-        print("Tarih parse hatası: $e");
+        printarih parse hatası: $e");
       }
     }
     return weekly;
@@ -893,6 +893,7 @@ class _StudentAttendancePageState extends State<StudentAttendancePage>
   }
 }
 */
+import 'package:EVOM_SPOR/core/app_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:EVOM_SPOR/datapage/data_page/data.dart';
@@ -1019,13 +1020,14 @@ class _StudentAttendancePageState extends State<StudentAttendancePage>
 
   Future<List<Attendance>> _fetchData() async {
     try {
-      final allAttendances = await GoogleSheetService.getAttendancesCached();
+      final repo = AppRepository();
+      if (!repo.isLoaded) await repo.loadCriticalData();
+
+      final allAttendances = repo.allAttendances;
       final data = allAttendances
           .where((a) => a.student_id == widget.student.app)
           .toList();
-
       data.sort((a, b) => b.attendance_date.compareTo(a.attendance_date));
-
       return data;
     } catch (e) {
       throw Exception("Veriler yüklenirken hata oluştu: $e");

@@ -37,7 +37,7 @@ class LocalNotificationService {
     await _notifications.initialize(settings: settings);
     _isInitialized = true;
 
-    print("✅ Bildirim servisi başlatıldı");
+    // print Bildirim servisi başlatıldı");
   }
 
   // 🔥 BASİT BİLDİRİM GÖSTER
@@ -69,7 +69,7 @@ class LocalNotificationService {
       body: body,
       payload: payload,
     );
-    print("📱 Bildirim gönderildi: $title");
+    // print Bildirim gönderildi: $title");
   }
 
   // 🔥 DOĞUM GÜNÜ BİLDİRİMİ
@@ -187,7 +187,7 @@ class NotificationService {
     String? payload, // 🚀 PAYLOAD EKLENDİ
   }) async {
     if (_sentNotificationIds.contains(id)) {
-      print("🔔 Bildirim daha önce gönderildi: $id");
+      // print Bildirim daha önce gönderildi: $id");
       return;
     }
 
@@ -225,9 +225,9 @@ class NotificationService {
       );
 
       await _saveSentNotification(id);
-      print("🔔 Bildirim gönderildi: $title (payload: $payload)");
+      // print Bildirim gönderildi: $title (payload: $payload)");
     } catch (e) {
-      print("❌ Bildirim hatası: $e");
+      // print Bildirim hatası: $e");
     }
   }
 
@@ -256,7 +256,7 @@ class NotificationService {
         notificationDetails: details,
       );
     } catch (e) {
-      print("❌ Basit bildirim hatası: $e");
+      // print Basit bildirim hatası: $e");
     }
   }
 

@@ -18,7 +18,12 @@ class Users {
   final String created_at;
   final String last_login;
   final String is_active;
-
+  // 🔥 YENİ ALANLAR
+  final String mother_name;
+  final String mother_phone;
+  final String father_name;
+  final String father_phone;
+  final String fcm_token;
   Users({
     required this.app,
     required this.branches_id,
@@ -34,49 +39,60 @@ class Users {
     required this.created_at,
     required this.last_login,
     required this.is_active,
+    this.mother_name = "",
+    this.mother_phone = "",
+    this.father_name = "",
+    this.father_phone = "",
+    this.fcm_token = "",
   });
 
   factory Users.fromJson(Map<String, dynamic> json) {
-    String getString(String key, {String defaultValue = ''}) {
-      final value = json[key];
-      if (value == null) return defaultValue;
-      return value.toString();
-    }
-
     return Users(
-      app: getString('app'),
-      branches_id: getString('branches_id'),
-      first_name: getString('first_name'),
-      last_name: getString('last_name'),
-      email: getString('email'),
-      phone: getString('phone'),
-      password_hash: getString('password_hash'),
-      role: getString('role'),
-      profile_photo_url: getString('profile_photo_url'),
-      amount: getString('amount'),
-      b_date: getString('b_date'),
-      created_at: getString('created_at'),
-      last_login: getString('last_login'),
-      is_active: getString('is_active'),
+      app: json['app']?.toString() ?? '',
+      branches_id: json['branches_id']?.toString() ?? '',
+      first_name: json['first_name']?.toString() ?? '',
+      last_name: json['last_name']?.toString() ?? '',
+      email: json['email']?.toString() ?? '',
+      phone: json['phone']?.toString() ?? '',
+      password_hash: json['password_hash']?.toString() ?? '',
+      role: json['role']?.toString() ?? '',
+      profile_photo_url: json['profile_photo_url']?.toString() ?? '',
+      amount: json['amount']?.toString() ?? '',
+      b_date: json['b_date']?.toString() ?? '',
+      created_at: json['created_at']?.toString() ?? '',
+      last_login: json['last_login']?.toString() ?? '',
+      is_active: json['is_active']?.toString() ?? '',
+      mother_name: json['mother_name']?.toString() ?? '',
+      mother_phone: json['mother_phone']?.toString() ?? '',
+      father_name: json['father_name']?.toString() ?? '',
+      father_phone: json['father_phone']?.toString() ?? '',
+      fcm_token: json['fcm_token']?.toString() ?? '', // 🔥 BUNU EKLE
     );
   }
 
-  Map<String, dynamic> toJson() => {
-    'app': app,
-    'branches_id': branches_id,
-    'first_name': first_name,
-    'last_name': last_name,
-    'email': email,
-    'phone': phone,
-    'password_hash': password_hash,
-    'role': role,
-    'profile_photo_url': profile_photo_url,
-    'amount': amount,
-    'b_date': b_date,
-    'created_at': created_at,
-    'last_login': last_login,
-    'is_active': is_active,
-  };
+  Map<String, dynamic> toJson() {
+    return {
+      'app': app,
+      'branches_id': branches_id,
+      'first_name': first_name,
+      'last_name': last_name,
+      'email': email,
+      'phone': phone,
+      'password_hash': password_hash,
+      'role': role,
+      'profile_photo_url': profile_photo_url,
+      'amount': amount,
+      'b_date': b_date,
+      'created_at': created_at,
+      'last_login': last_login,
+      'is_active': is_active,
+      'mother_name': mother_name,
+      'mother_phone': mother_phone,
+      'father_name': father_name,
+      'father_phone': father_phone,
+      'fcm_token': fcm_token,
+    };
+  }
 }
 
 // ==========================================
