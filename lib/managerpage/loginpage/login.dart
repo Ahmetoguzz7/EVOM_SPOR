@@ -2,11 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:EVOM_SPOR/datapage/data_page/data.dart';
 import 'package:EVOM_SPOR/datapage/fetch_data_page.dart';
+import 'package:EVOM_SPOR/core/app_repository.dart';
+import 'package:EVOM_SPOR/local/local_storage_service.dart';
 
 class AdvancedSignUpPage extends StatefulWidget {
   const AdvancedSignUpPage({super.key});
@@ -18,6 +21,8 @@ class AdvancedSignUpPage extends StatefulWidget {
 class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
   final _formKey = GlobalKey<FormState>();
   final _formKeyParent = GlobalKey<FormState>();
+  final AppRepository _repo = AppRepository();
+  final LocalStorageService _localStorage = LocalStorageService();
 
   String _mode = "register";
   Users? _selectedUser;
@@ -28,6 +33,8 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
   String _selectedGroupFilter = "";
   List<Group> _allGroups = [];
   Map<String, List<String>> _userGroups = {};
+  String _selectedSupervisorCoachId = '';
+  List<Coach> _coaches = [];
 
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _surnameController = TextEditingController();
@@ -38,6 +45,7 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
   final TextEditingController _createdDateController = TextEditingController();
   final TextEditingController _healthProblemsController =
       TextEditingController();
+  final TextEditingController _amountController = TextEditingController();
 
   final TextEditingController _parentNameController = TextEditingController();
   final TextEditingController _parentSurnameController =
@@ -48,6 +56,7 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
   final TextEditingController _motherPhoneController = TextEditingController();
   final TextEditingController _fatherNameController = TextEditingController();
   final TextEditingController _fatherPhoneController = TextEditingController();
+
   String _selectedRole = 'student';
   String _selectedBranchId = '';
   String _selectedSportId = '';
@@ -68,24 +77,17 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
   // =========================================================================
 
   String? _validatePhone(String? value) {
-    if (value == null || value.isEmpty) {
-      return "Telefon numarası zorunlu";
-    }
+    if (value == null || value.isEmpty) return "Telefon numarası zorunlu";
     final cleaned = value.replaceAll(RegExp(r'[^0-9]'), '');
-    if (cleaned.length != 11) {
+    if (cleaned.length != 11)
       return "Telefon numarası tam olarak 11 haneli olmalıdır";
-    }
-    if (!cleaned.startsWith('05')) {
+    if (!cleaned.startsWith('05'))
       return "Telefon numarası 05 ile başlamalıdır (Örn: 05xxxxxxxxx)";
-    }
     return null;
   }
 
   String? _validateEmail(String? value) {
-    if (value == null || value.isEmpty) {
-      return "E-posta adresi zorunlu";
-    }
-
+    if (value == null || value.isEmpty) return "E-posta adresi zorunlu";
     final validDomains = [
       '@gmail.com',
       '@hotmail.com',
@@ -96,16 +98,12 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
       '@protonmail.com',
       '@evom.com.tr',
     ];
-
     final email = value.trim().toLowerCase();
-
     final emailRegex = RegExp(
       r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
     );
-    if (!emailRegex.hasMatch(email)) {
+    if (!emailRegex.hasMatch(email))
       return "Geçerli bir e-posta adresi formatı giriniz";
-    }
-
     bool hasValidDomain = false;
     for (var domain in validDomains) {
       if (email.endsWith(domain)) {
@@ -113,27 +111,27 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
         break;
       }
     }
-
-    if (!hasValidDomain) {
+    if (!hasValidDomain)
       return "Sadece izin verilen domainler desteklenir (gmail, hotmail, evom.com.tr vb.)";
-    }
-
     return null;
   }
 
   String? _validatePassword(String? value) {
     if (_mode == "register") {
-      if (value == null || value.isEmpty) {
-        return "Şifre zorunlu";
-      }
-      if (value.length < 6) {
-        return "Şifre en az 6 karakter olmalıdır";
-      }
+      if (value == null || value.isEmpty) return "Şifre zorunlu";
+      if (value.length < 6) return "Şifre en az 6 karakter olmalıdır";
     }
     if (_mode == "update" && value != null && value.isNotEmpty) {
-      if (value.length < 6) {
-        return "Yeni şifre en az 6 karakter olmalıdır";
-      }
+      if (value.length < 6) return "Yeni şifre en az 6 karakter olmalıdır";
+    }
+    return null;
+  }
+
+  String? _validateAmount(String? value) {
+    if (_selectedRole == 'student' || _selectedRole == 'öğrenci') {
+      if (value == null || value.isEmpty) return "Aylık ücret zorunlu";
+      final amount = double.tryParse(value);
+      if (amount == null || amount < 0) return "Geçerli bir ücret giriniz";
     }
     return null;
   }
@@ -185,6 +183,7 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
     _birthDateController.dispose();
     _createdDateController.dispose();
     _healthProblemsController.dispose();
+    _amountController.dispose();
     _parentNameController.dispose();
     _parentSurnameController.dispose();
     _parentPhoneController.dispose();
@@ -193,7 +192,6 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
     _motherPhoneController.dispose();
     _fatherNameController.dispose();
     _fatherPhoneController.dispose();
-
     super.dispose();
   }
 
@@ -203,87 +201,45 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
 
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
-
     try {
-      final results = await Future.wait([
-        GoogleSheetService.getBranchesCached(),
-        GoogleSheetService.getSportsCached(),
-        GoogleSheetService.getGroupsCached(),
-        GoogleSheetService.getUsersCached(),
-      ]);
+      _branches = _repo.allBranches;
+      _sports = _repo.allSports;
+      _groups = _repo.allGroups;
+      _allGroups = _repo.allGroups;
+      _existingUsers = _repo.allUsers;
+      _coaches = _repo.allCoaches;
 
-      _branches = results[0] as List<Branches>;
-      _sports = results[1] as List<Sports>;
-      _groups = results[2] as List<Group>;
-      _allGroups = results[2] as List<Group>;
-      _existingUsers = results[3] as List<Users>;
-
-      try {
-        final groupStudents = await GoogleSheetService.getGroupStudentsCached();
-        _userGroups.clear();
-        for (var rel in groupStudents) {
-          if (rel.is_active.toString().toUpperCase() == "TRUE") {
-            if (!_userGroups.containsKey(rel.student_id)) {
-              _userGroups[rel.student_id] = [];
-            }
-            _userGroups[rel.student_id]!.add(rel.groups_id);
+      _userGroups.clear();
+      for (var rel in _repo.allGroupStudents) {
+        if (rel.is_active.toString().toUpperCase() == "TRUE") {
+          if (!_userGroups.containsKey(rel.student_id)) {
+            _userGroups[rel.student_id] = [];
           }
+          _userGroups[rel.student_id]!.add(rel.groups_id);
         }
-      } catch (e) {
-        print("Grup-öğrenci ilişkileri yüklenemedi: $e");
       }
 
       if (_branches.isNotEmpty) _selectedBranchId = _branches.first.branches_id;
       if (_sports.isNotEmpty) _selectedSportId = _sports.first.sports_id;
       if (_groups.isNotEmpty) _selectedGroupId = _groups.first.groups_id;
     } catch (e) {
-      print("Veri yükleme hatası: $e");
+      print("Lokal veri yükleme hatası: $e");
     }
-
     if (mounted) setState(() => _isLoading = false);
-    // _loadData içinde veya bir yerde, kullanıcıları ön işle
-    List<Map<String, dynamic>> _preprocessedUsers = [];
-
-    void _preprocessUsers() {
-      _preprocessedUsers = _existingUsers.map((user) {
-        return {
-          'user': user,
-          'searchText': "${user.first_name} ${user.last_name} ${user.email}"
-              .toLowerCase(),
-          'isAllowedRole':
-              user.role.toLowerCase() == "student" ||
-              user.role.toLowerCase() == "öğrenci" ||
-              user.role.toLowerCase() == "parent" ||
-              user.role.toLowerCase() == "veli" ||
-              user.role.toLowerCase() == "coach" ||
-              user.role.toLowerCase() == "antrenör" ||
-              user.role.toLowerCase() == "admin" ||
-              user.role.toLowerCase() == "yönetici" ||
-              user.role.toLowerCase() == "accountant" ||
-              user.role.toLowerCase() == "muhasebeci",
-        };
-      }).toList();
-    }
+    unawaited(_refreshDataInBackground());
   }
 
   Future<void> _refreshDataInBackground() async {
     if (!mounted) return;
     setState(() => _isBackgroundProcessing = true);
-
     try {
-      final results = await Future.wait([
-        GoogleSheetService.getBranchesCached(forceRefresh: true),
-        GoogleSheetService.getSportsCached(forceRefresh: true),
-        GoogleSheetService.getGroupsCached(forceRefresh: true),
-        GoogleSheetService.getUsersCached(forceRefresh: true),
-      ]);
-
-      _branches = results[0] as List<Branches>;
-      _sports = results[1] as List<Sports>;
-      _groups = results[2] as List<Group>;
-      _allGroups = results[2] as List<Group>;
-      _existingUsers = results[3] as List<Users>;
-
+      await _repo.loadAllData();
+      _branches = _repo.allBranches;
+      _sports = _repo.allSports;
+      _groups = _repo.allGroups;
+      _allGroups = _repo.allGroups;
+      _existingUsers = _repo.allUsers;
+      _coaches = _repo.allCoaches;
       if (_branches.isNotEmpty && _selectedBranchId.isEmpty) {
         _selectedBranchId = _branches.first.branches_id;
       }
@@ -367,6 +323,7 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
   // =========================================================================
   // ARAMA FONKSİYONLARI
   // =========================================================================
+
   void _searchUserWithGroup(String query, String groupId) {
     _searchDebounce?.cancel();
     _searchDebounce = Timer(const Duration(milliseconds: 300), () {
@@ -377,10 +334,7 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
           _searchResults = [];
           return;
         }
-
         final searchLower = query.toLowerCase().trim();
-
-        // 🔥 GRUP ID'LERİNİ ÖNCEDEN CACHE'LE (her seferinde tekrar alma)
         _searchResults = _existingUsers.where((user) {
           final role = user.role.toLowerCase();
           final isAllowedRole =
@@ -390,33 +344,27 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
               role == "veli" ||
               role == "coach" ||
               role == "antrenör" ||
+              role == "assistant_coach" ||
+              role == "yardımcı_antrenör" ||
               role == "admin" ||
               role == "yönetici" ||
               role == "accountant" ||
               role == "muhasebeci";
           if (!isAllowedRole) return false;
-
-          // Grup filtresi
           if (groupId.isNotEmpty) {
             final userGroupIds = _userGroups[user.app] ?? [];
             if (!userGroupIds.contains(groupId)) return false;
           }
-
-          // İsim/email filtresi
           if (query.isNotEmpty) {
             final fullName = "${user.first_name} ${user.last_name}"
                 .toLowerCase();
             return fullName.contains(searchLower) ||
                 user.email.toLowerCase().contains(searchLower);
           }
-
           return true;
         }).toList();
-
-        // Sonuçları sınırla
-        if (_searchResults.length > 50) {
+        if (_searchResults.length > 50)
           _searchResults = _searchResults.sublist(0, 50);
-        }
       });
     });
   }
@@ -431,10 +379,7 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
           _searchResults = [];
           return;
         }
-
         final searchLower = query.toLowerCase().trim();
-
-        // 🔥 PERFORMANS İYİLEŞTİRMESİ: Önce filtrele, sonra detaylı ara
         _searchResults = _existingUsers.where((user) {
           final role = user.role.toLowerCase();
           final isAllowedRole =
@@ -444,22 +389,19 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
               role == "veli" ||
               role == "coach" ||
               role == "antrenör" ||
+              role == "assistant_coach" ||
+              role == "yardımcı_antrenör" ||
               role == "admin" ||
               role == "yönetici" ||
               role == "accountant" ||
               role == "muhasebeci";
           if (!isAllowedRole) return false;
-
-          // 🔥 HIZLI KONTROL: İsim veya email içeriyor mu?
           final fullName = "${user.first_name} ${user.last_name}".toLowerCase();
           return fullName.contains(searchLower) ||
               user.email.toLowerCase().contains(searchLower);
         }).toList();
-
-        // 🔥 Arama sonuçlarını sınırla (maks 50 sonuç göster)
-        if (_searchResults.length > 50) {
+        if (_searchResults.length > 50)
           _searchResults = _searchResults.sublist(0, 50);
-        }
       });
     });
   }
@@ -542,6 +484,7 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
       _emailController.text = user.email;
       _phoneController.text = user.phone;
       _passwordController.text = "";
+      _amountController.text = user.amount;
 
       String birthDate = user.b_date;
       if (birthDate.contains('T')) birthDate = birthDate.split('T')[0];
@@ -558,7 +501,30 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
           ? user.branches_id
           : (_branches.isNotEmpty ? _branches.first.branches_id : '');
 
-      final validRoles = ['student', 'parent', 'coach', 'admin', 'accountant'];
+      final coach = _coaches.firstWhere(
+        (c) => c.user_id == user.app,
+        orElse: () => Coach(
+          coach_id: '',
+          user_id: '',
+          branches_id: '',
+          sports_id: '',
+          bio: '',
+          certificate_info: '',
+          monthly_salary: '',
+          hired_at: '',
+          supervisor_coach_id: '',
+        ),
+      );
+      _selectedSupervisorCoachId = coach.supervisor_coach_id;
+
+      final validRoles = [
+        'student',
+        'parent',
+        'coach',
+        'admin',
+        'accountant',
+        'assistant_coach',
+      ];
       _selectedRole = validRoles.contains(user.role.toLowerCase())
           ? user.role.toLowerCase()
           : 'student';
@@ -586,6 +552,7 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
     _birthDateController.clear();
     _createdDateController.clear();
     _healthProblemsController.clear();
+    _amountController.clear();
     _selectedBranchId = _branches.isNotEmpty ? _branches.first.branches_id : "";
     _selectedSportId = _sports.isNotEmpty ? _sports.first.sports_id : "";
     _selectedGroupId = _groups.isNotEmpty ? _groups.first.groups_id : "";
@@ -595,6 +562,7 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
     _motherPhoneController.clear();
     _fatherNameController.clear();
     _fatherPhoneController.clear();
+    _selectedSupervisorCoachId = '';
   }
 
   Future<void> _selectBirthDate() async {
@@ -615,11 +583,9 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
   Future<void> _selectCreatedDate() async {
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: DateTime.now(), // Varsayılan bugün
-      firstDate: DateTime(2020), // 2020'den önce seçilemesin (opsiyonel)
-      lastDate: DateTime.now().add(
-        const Duration(days: 365 * 5),
-      ), // 🔥 5 YIL SONRASINA KADAR seçebilir!
+      initialDate: DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 365 * 5)),
       helpText: 'Kayıt Tarihi Seç (Gelecek tarih seçebilirsiniz)',
       cancelText: 'İptal',
       confirmText: 'Tamam',
@@ -647,7 +613,6 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
       _showSnackBar("Lütfen önce bir kullanıcı seçin!", isError: true);
       return;
     }
-
     if (!_formKey.currentState!.validate()) {
       _showSnackBar(
         "❌ Lütfen formdaki hatalı alanları düzeltiniz!",
@@ -669,75 +634,115 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
       return;
     }
 
-    setState(() => _isLoading = true);
+    String supervisorId = '';
+    if (_selectedRole == 'assistant_coach' ||
+        _selectedRole == 'yardımcı_antrenör') {
+      supervisorId = _selectedSupervisorCoachId;
+    }
 
-    String? photoUrl = _existingPhotoUrl;
-    if (_profileImage != null) {
-      try {
+    final updatedStudent = Users(
+      app: _selectedUser!.app,
+      branches_id: _selectedBranchId,
+      first_name: _nameController.text.trim(),
+      last_name: _surnameController.text.trim(),
+      email: email,
+      phone: _phoneController.text.trim(),
+      password_hash: _passwordController.text.isNotEmpty
+          ? _hashPassword(_passwordController.text.trim())
+          : _selectedUser!.password_hash,
+      role: _selectedRole,
+      profile_photo_url: _profileImage != null
+          ? _profileImage!.path
+          : _existingPhotoUrl,
+      amount: _amountController.text.trim(),
+      b_date: _birthDateController.text.trim(),
+      created_at: _createdDateController.text.trim(),
+      last_login: _selectedUser!.last_login,
+      is_active: _selectedUser!.is_active,
+      mother_name: _motherNameController.text.trim(),
+      mother_phone: _motherPhoneController.text.trim(),
+      father_name: _fatherNameController.text.trim(),
+      father_phone: _fatherPhoneController.text.trim(),
+      supervisor_coach_id: supervisorId,
+    );
+
+    final idx = _repo.allUsers.indexWhere((u) => u.app == _selectedUser!.app);
+    if (idx != -1) {
+      _repo.allUsers[idx] = updatedStudent;
+    }
+    await _localStorage.saveUsers(_repo.allUsers);
+    await _repo.refreshSingleTable('users');
+
+    _showSuccessNotification(
+      "✅ Güncelleme Başarılı",
+      "${_nameController.text.trim()} ${_surnameController.text.trim()} bilgileri güncellendi.",
+    );
+    _clearForm();
+
+    if (mounted) {
+      setState(() {
+        _selectedUser = null;
+        _existingPhotoUrl = "";
+      });
+      Navigator.of(context).pop();
+    }
+
+    unawaited(_executeBackgroundUpdate(updatedStudent, email));
+  }
+
+  Future<void> _executeBackgroundUpdate(Users student, String email) async {
+    try {
+      String? photoUrl = student.profile_photo_url;
+      if (_profileImage != null) {
         final fileName = "${email}.jpg";
         photoUrl = await GoogleSheetService.uploadImageToDrive(
           _profileImage!,
           fileName,
           "Öğrenci Bilgileri_Images",
-          targetUserId: _selectedUser!.app,
-          //targetField: "profile_photo_url",
+          targetUserId: student.app,
         );
-      } catch (e) {
-        print("Fotoğraf güncelleme hatası: $e");
       }
-    }
 
-    Map<String, dynamic> updatedData = {
-      "app": _selectedUser!.app,
-      "first_name": _nameController.text.trim(),
-      "last_name": _surnameController.text.trim(),
-      "email": email,
-      "phone": _phoneController.text.trim(),
-      "role": _selectedRole,
-      "branches_id": _selectedBranchId,
-      "b_date": _birthDateController.text.trim(),
-      "created_at": _createdDateController.text.trim(),
-      "amount": "",
-      "profile_photo_url": photoUrl ?? "",
-      "mother_name": _motherNameController.text.trim(),
-      "mother_phone": _motherPhoneController.text.trim(),
-      "father_name": _fatherNameController.text.trim(),
-      "father_phone": _fatherPhoneController.text.trim(),
-    };
-
-    bool success = await GoogleSheetService.updateUser(updatedData);
-
-    if (success) {
-      await _refreshDataInBackground();
-      _showSuccessNotification(
-        "✅ Güncelleme Başarılı",
-        "${_nameController.text.trim()} ${_surnameController.text.trim()} bilgileri güncellendi.",
-      );
-      _clearForm();
-      if (mounted) {
-        setState(() {
-          _selectedUser = null;
-          _existingPhotoUrl = "";
-          _isLoading = false;
-        });
+      String supervisorId = '';
+      if (_selectedRole == 'assistant_coach' ||
+          _selectedRole == 'yardımcı_antrenör') {
+        supervisorId = _selectedSupervisorCoachId;
       }
-      Future.delayed(const Duration(seconds: 1), () {
-        if (mounted) Navigator.of(context).pop();
-      });
-    } else {
-      if (mounted) setState(() => _isLoading = false);
-      _showSnackBar("❌ Güncelleme başarısız!", isError: true);
+
+      Map<String, dynamic> updatedData = {
+        "app": student.app,
+        "first_name": student.first_name,
+        "last_name": student.last_name,
+        "email": student.email,
+        "phone": student.phone,
+        "role": student.role,
+        "branches_id": student.branches_id,
+        "b_date": student.b_date,
+        "created_at": student.created_at,
+        "amount": student.amount,
+        "profile_photo_url": photoUrl ?? "",
+        "mother_name": student.mother_name,
+        "mother_phone": student.mother_phone,
+        "father_name": student.father_name,
+        "father_phone": student.father_phone,
+        "supervisor_coach_id": supervisorId,
+      };
+
+      await GoogleSheetService.updateUser(updatedData);
+      await _repo.refreshSingleTable('users');
+    } catch (e) {
+      print("Arka plan güncelleme hatası: $e");
     }
   }
 
   // =========================================================================
-  // KAYIT İŞLEMİ
+  // KAYIT İŞLEMİ (LOG'LU)
   // =========================================================================
-  Future<void> _handleRegister() async {
-    // 🔒 Aynı anda birden fazla kayıt engeli
-    if (_isLoading) return;
 
-    // ✅ Validasyonlar
+  Future<void> _handleRegister() async {
+    print("🚀 _handleRegister BAŞLADI");
+
+    if (_isLoading) return;
     if (!_formKey.currentState!.validate()) {
       _showSnackBar(
         "❌ Lütfen formdaki hatalı alanları düzeltiniz!",
@@ -747,6 +752,8 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
     }
 
     final email = _emailController.text.trim().toLowerCase();
+    print("📧 Email: $email");
+
     final emailExists = await _checkEmailExists(email);
     if (emailExists) {
       _showSnackBar("❌ Bu e-posta adresi zaten kayıtlı!", isError: true);
@@ -761,134 +768,351 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
       return;
     }
 
-    // 🟢 Loading başlat
-    setState(() => _isLoading = true);
+    // 🔥🔥🔥 TÜM VERİLERİ KAYDET (clearForm'dan ÖNCE)
+    final firstName = _nameController.text.trim();
+    final lastName = _surnameController.text.trim();
+    final phone = _phoneController.text.trim();
+    final amount = _amountController.text.trim().isEmpty
+        ? "0"
+        : _amountController.text.trim();
+    final birthDate = _birthDateController.text.trim().isEmpty
+        ? DateTime.now().toIso8601String().substring(0, 10)
+        : _birthDateController.text.trim();
+    final createdDate = _createdDateController.text.trim().isEmpty
+        ? DateTime.now().toIso8601String().substring(0, 10)
+        : _createdDateController.text.trim();
+    final motherName = _motherNameController.text.trim();
+    final motherPhone = _motherPhoneController.text.trim();
+    final fatherName = _fatherNameController.text.trim();
+    final fatherPhone = _fatherPhoneController.text.trim();
+    final healthProblems = _healthProblemsController.text.trim();
+    final hasParent = _hasParent;
+    final parentName = _parentNameController.text.trim();
+    final parentSurname = _parentSurnameController.text.trim();
+    final parentPhone = _parentPhoneController.text.trim();
+    final parentEmail = _parentEmailController.text.trim();
 
-    String? photoUrl = "";
-    if (_profileImage != null) {
-      try {
+    final supervisorId =
+        (_selectedRole == 'assistant_coach' ||
+            _selectedRole == 'yardımcı_antrenör')
+        ? _selectedSupervisorCoachId
+        : '';
+
+    final hashedPassword = _hashPassword(_passwordController.text.trim());
+
+    print("📝 FORM VERİLERİ:");
+    print("   Ad: $firstName");
+    print("   Soyad: $lastName");
+    print("   Email: $email");
+    print("   Telefon: $phone");
+    print("   Rol: $_selectedRole");
+    print("   Supervisor ID: $supervisorId");
+    print("   Amount: $amount");
+
+    // ✅ ÖNCE ARKA PLAN İŞLEMİNİ BAŞLAT
+    unawaited(
+      _executeBackgroundRegisterWithData(
+        firstName: firstName,
+        lastName: lastName,
+        email: email,
+        phone: phone,
+        hashedPassword: hashedPassword,
+        role: _selectedRole,
+        branchId: _selectedBranchId,
+        sportId: _selectedSportId,
+        groupId: _selectedGroupId,
+        supervisorId: supervisorId,
+        amount: amount,
+        birthDate: birthDate,
+        createdDate: createdDate,
+        motherName: motherName,
+        motherPhone: motherPhone,
+        fatherName: fatherName,
+        fatherPhone: fatherPhone,
+        healthProblems: healthProblems,
+        hasParent: hasParent,
+        parentName: parentName,
+        parentSurname: parentSurname,
+        parentPhone: parentPhone,
+        parentEmail: parentEmail,
+        profileImage: _profileImage,
+      ),
+    );
+
+    // ✅ SONRA formu temizle ve pop
+    final studentName = "$firstName $lastName";
+    _showSuccessNotification(
+      "🎉 Kayıt Başarılı!",
+      "$studentName başarıyla kaydedildi.",
+    );
+
+    _clearForm();
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  Future<void> _executeBackgroundRegisterWithData({
+    required String firstName,
+    required String lastName,
+    required String email,
+    required String phone,
+    required String hashedPassword,
+    required String role,
+    required String branchId,
+    required String sportId,
+    required String groupId,
+    required String supervisorId,
+    required String amount,
+    required String birthDate,
+    required String createdDate,
+    required String motherName,
+    required String motherPhone,
+    required String fatherName,
+    required String fatherPhone,
+    required String healthProblems,
+    required bool hasParent,
+    required String parentName,
+    required String parentSurname,
+    required String parentPhone,
+    required String parentEmail,
+    File? profileImage,
+  }) async {
+    print("🔄 _executeBackgroundRegisterWithData BAŞLADI");
+    print("   Ad: $firstName");
+    print("   Soyad: $lastName");
+    print("   Email: $email");
+
+    try {
+      String? photoUrl = "";
+      if (profileImage != null) {
+        final fileName = "${email}.jpg";
+        photoUrl = await GoogleSheetService.uploadImageToDrive(
+          profileImage,
+          fileName,
+          "Öğrenci Bilgileri_Images",
+        );
+        print("🖼️ Fotoğraf yüklendi: $photoUrl");
+      }
+
+      Map<String, dynamic> userInfo = {
+        "app": "",
+        "branches_id": branchId,
+        "first_name": firstName,
+        "last_name": lastName,
+        "email": email,
+        "phone": phone,
+        "password_hash": hashedPassword,
+        "role": role,
+        "profile_photo_url": photoUrl ?? "",
+        "amount": amount,
+        "b_date": birthDate,
+        "created_at": createdDate,
+        "last_login": "",
+        "is_active": "TRUE",
+        "mother_name": motherName,
+        "mother_phone": motherPhone,
+        "father_name": fatherName,
+        "father_phone": fatherPhone,
+      };
+
+      if (role == 'assistant_coach' && supervisorId.isNotEmpty) {
+        userInfo["supervisor_coach_id"] = supervisorId;
+        print("🔗 Supervisor ID eklendi: $supervisorId");
+      }
+
+      print("📤 Gönderilen userInfo:");
+      print(jsonEncode(userInfo));
+
+      Map<String, dynamic> allData = {
+        "user_info": userInfo,
+        "sports_id": sportId,
+      };
+
+      if (healthProblems.isNotEmpty) {
+        allData["health_problems"] = healthProblems;
+      }
+
+      if (hasParent) {
+        allData["parent_info"] = {
+          "first_name": parentName,
+          "last_name": parentSurname,
+          "phone": parentPhone,
+          "email": parentEmail,
+        };
+        print("👨‍👩‍👧 Veli bilgileri eklendi");
+      }
+
+      final selectedGroupIdForSave = groupId.isNotEmpty && groupId != "none"
+          ? groupId
+          : "";
+      if (selectedGroupIdForSave.isNotEmpty) {
+        allData["group_id"] = selectedGroupIdForSave;
+        print("📚 Grup ID eklendi: $selectedGroupIdForSave");
+      }
+
+      print("📦 Gönderilen Tüm Veri:");
+      print(jsonEncode(allData));
+
+      bool result = await GoogleSheetService.registerEverywhere(allData);
+      print("📡 registerEverywhere SONUCU: $result");
+
+      if (result && selectedGroupIdForSave.isNotEmpty) {
+        final allUsers = await GoogleSheetService.getUsersCached(
+          forceRefresh: true,
+        );
+        final newUser = allUsers.firstWhere(
+          (u) => u.email.toLowerCase() == email,
+          orElse: () => Users(
+            app: '',
+            branches_id: '',
+            first_name: '',
+            last_name: '',
+            email: '',
+            phone: '',
+            password_hash: '',
+            role: '',
+            profile_photo_url: '',
+            amount: '',
+            b_date: '',
+            created_at: '',
+            last_login: '',
+            is_active: '',
+          ),
+        );
+        if (newUser.app.isNotEmpty) {
+          await GoogleSheetService.assignStudentToGroup(
+            newUser.app,
+            selectedGroupIdForSave,
+          );
+          print(
+            "✅ Öğrenci gruba atandı: ${newUser.app} -> $selectedGroupIdForSave",
+          );
+        }
+      }
+      await _repo.refreshSingleTable('users');
+      print("✅ _executeBackgroundRegisterWithData TAMAMLANDI");
+    } catch (e) {
+      print("❌ Arka plan kayıt hatası: $e");
+      print("❌ Hata detayı: ${e.toString()}");
+    }
+  }
+
+  /*
+  Future<void> _executeBackgroundRegister(
+    Users student,
+    String hashedPassword,
+    String email,
+  ) async {
+    print("🔄 _executeBackgroundRegister BAŞLADI");
+
+    try {
+      String? photoUrl = "";
+      if (_profileImage != null) {
         final fileName = "${email}.jpg";
         photoUrl = await GoogleSheetService.uploadImageToDrive(
           _profileImage!,
           fileName,
           "Öğrenci Bilgileri_Images",
         );
-      } catch (e) {
-        print("Resim yükleme hatası: $e");
-        photoUrl = "";
+        print("🖼️ Fotoğraf yüklendi: $photoUrl");
       }
-    }
 
-    final hashedPassword = _hashPassword(_passwordController.text.trim());
-
-    Map<String, dynamic> userInfo = {
-      "app": "",
-      "branches_id": _selectedBranchId,
-      "first_name": _nameController.text.trim(),
-      "last_name": _surnameController.text.trim(),
-      "email": email,
-      "phone": _phoneController.text.trim(),
-      "password_hash": hashedPassword,
-      "role": _selectedRole,
-      "profile_photo_url": photoUrl,
-      "amount": "0",
-      "b_date": _birthDateController.text.trim().isEmpty
-          ? DateTime.now().toIso8601String().substring(0, 10)
-          : _birthDateController.text.trim(),
-      "created_at": _createdDateController.text.trim().isEmpty
-          ? DateTime.now().toIso8601String().substring(0, 10)
-          : _createdDateController.text.trim(),
-      "last_login": "",
-      "is_active": "TRUE",
-      "mother_name": _motherNameController.text.trim(),
-      "mother_phone": _motherPhoneController.text.trim(),
-      "father_name": _fatherNameController.text.trim(),
-      "father_phone": _fatherPhoneController.text.trim(),
-    };
-
-    Map<String, dynamic> allData = {
-      "user_info": userInfo,
-      "sports_id": _selectedSportId,
-    };
-
-    if (_healthProblemsController.text.trim().isNotEmpty) {
-      allData["health_problems"] = _healthProblemsController.text.trim();
-    }
-
-    if (_hasParent) {
-      allData["parent_info"] = {
-        "first_name": _parentNameController.text.trim(),
-        "last_name": _parentSurnameController.text.trim(),
-        "phone": _parentPhoneController.text.trim(),
-        "email": _parentEmailController.text.trim(),
+      Map<String, dynamic> userInfo = {
+        "app": "",
+        "branches_id": _selectedBranchId,
+        "first_name": _nameController.text.trim(),
+        "last_name": _surnameController.text.trim(),
+        "email": email,
+        "phone": _phoneController.text.trim(),
+        "password_hash": hashedPassword,
+        "role": _selectedRole,
+        "profile_photo_url": photoUrl ?? "",
+        "amount": _amountController.text.trim().isEmpty
+            ? "0"
+            : _amountController.text.trim(),
+        "b_date": _birthDateController.text.trim().isEmpty
+            ? DateTime.now().toIso8601String().substring(0, 10)
+            : _birthDateController.text.trim(),
+        "created_at": _createdDateController.text.trim().isEmpty
+            ? DateTime.now().toIso8601String().substring(0, 10)
+            : _createdDateController.text.trim(),
+        "last_login": "",
+        "is_active": "TRUE",
+        "mother_name": _motherNameController.text.trim(),
+        "mother_phone": _motherPhoneController.text.trim(),
+        "father_name": _fatherNameController.text.trim(),
+        "father_phone": _fatherPhoneController.text.trim(),
       };
-    }
 
-    final selectedGroupIdForSave =
-        _selectedGroupId.isNotEmpty && _selectedGroupId != "none"
-        ? _selectedGroupId
-        : "";
-
-    if (selectedGroupIdForSave.isNotEmpty) {
-      allData["group_id"] = selectedGroupIdForSave;
-    }
-
-    bool result = await GoogleSheetService.registerEverywhere(allData);
-
-    if (result && selectedGroupIdForSave.isNotEmpty) {
-      final allUsers = await GoogleSheetService.getUsersCached(
-        forceRefresh: true,
-      );
-      final newUser = allUsers.firstWhere(
-        (u) => u.email.toLowerCase() == email,
-        orElse: () => Users(
-          app: "",
-          branches_id: "",
-          first_name: "",
-          last_name: "",
-          email: "",
-          phone: "",
-          password_hash: "",
-          role: "",
-          profile_photo_url: "",
-          amount: "",
-          b_date: "",
-          created_at: "",
-          last_login: "",
-          is_active: "",
-        ),
-      );
-
-      if (newUser.app.isNotEmpty) {
-        await GoogleSheetService.assignStudentToGroup(
-          newUser.app,
-          selectedGroupIdForSave,
-        );
+      if (_selectedRole == 'assistant_coach' &&
+          _selectedSupervisorCoachId.isNotEmpty) {
+        userInfo["supervisor_coach_id"] = _selectedSupervisorCoachId;
+        print("🔗 Supervisor ID eklendi: ${_selectedSupervisorCoachId}");
       }
-    }
 
-    await _refreshDataInBackground();
+      print("📤 Gönderilen userInfo:");
+      print(jsonEncode(userInfo));
 
-    // 🔒 Loading kaldır
-    if (mounted) setState(() => _isLoading = false);
+      Map<String, dynamic> allData = {
+        "user_info": userInfo,
+        "sports_id": _selectedSportId,
+      };
 
-    if (result && mounted) {
-      final studentName =
-          "${_nameController.text.trim()} ${_surnameController.text.trim()}";
-      _showSuccessNotification(
-        "🎉 Kayıt Başarılı!",
-        "$studentName başarıyla kaydedildi.",
-      );
-      _clearForm();
+      if (_healthProblemsController.text.trim().isNotEmpty) {
+        allData["health_problems"] = _healthProblemsController.text.trim();
+      }
 
-      // ⏱️ 2 saniye bekle sonra sayfadan at
-      await Future.delayed(const Duration(seconds: 2));
-      if (mounted) Navigator.of(context).pop();
-    } else if (mounted) {
-      _showSnackBar("❌ Kayıt başarısız!", isError: true);
+      if (_hasParent) {
+        allData["parent_info"] = {
+          "first_name": _parentNameController.text.trim(),
+          "last_name": _parentSurnameController.text.trim(),
+          "phone": _parentPhoneController.text.trim(),
+          "email": _parentEmailController.text.trim(),
+        };
+        print("👨‍👩‍👧 Veli bilgileri eklendi");
+      }
+
+      final selectedGroupIdForSave =
+          _selectedGroupId.isNotEmpty && _selectedGroupId != "none"
+          ? _selectedGroupId
+          : "";
+      if (selectedGroupIdForSave.isNotEmpty) {
+        allData["group_id"] = selectedGroupIdForSave;
+        print("📚 Grup ID eklendi: $selectedGroupIdForSave");
+      }
+
+      print("📦 Gönderilen Tüm Veri:");
+      print(jsonEncode(allData));
+
+      bool result = await GoogleSheetService.registerEverywhere(allData);
+
+      print("📡 registerEverywhere SONUCU: $result");
+
+      if (result && selectedGroupIdForSave.isNotEmpty) {
+        final allUsers = await GoogleSheetService.getUsersCached(
+          forceRefresh: true,
+        );
+        final newUser = allUsers.firstWhere(
+          (u) => u.email.toLowerCase() == email,
+          orElse: () => student,
+        );
+        if (newUser.app.isNotEmpty) {
+          await GoogleSheetService.assignStudentToGroup(
+            newUser.app,
+            selectedGroupIdForSave,
+          );
+          print(
+            "✅ Öğrenci gruba atandı: ${newUser.app} -> $selectedGroupIdForSave",
+          );
+        }
+      }
+      await _repo.refreshSingleTable('users');
+      print("✅ _executeBackgroundRegister TAMAMLANDI");
+    } catch (e) {
+      print("❌ Arka plan kayıt hatası: $e");
+      print("❌ Hata detayı: ${e.toString()}");
     }
   }
-
+*/
   String _getRoleText(String role) {
     switch (role.toLowerCase()) {
       case 'student':
@@ -900,6 +1124,9 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
       case 'coach':
       case 'antrenör':
         return 'Antrenör';
+      case 'assistant_coach':
+      case 'yardımcı_antrenör':
+        return 'Yardımcı Antrenör';
       case 'admin':
       case 'yönetici':
         return 'Admin';
@@ -911,30 +1138,6 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
     }
   }
 
-  void _showLoadingDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false, // Dışarı tıklanınca kapanmasın
-      builder: (context) => const PopScope(
-        canPop: false, // Geri tuşuyla da kapanmasın
-        child: Center(
-          child: Card(
-            child: Padding(
-              padding: EdgeInsets.all(20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
-                  Text("İşleminiz gerçekleştiriliyor..."),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
   // =========================================================================
   // BUILD - ANA SAYFA
   // =========================================================================
@@ -1002,7 +1205,7 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
                             const SizedBox(height: 20),
                             _buildSelectionSection(),
                             const SizedBox(height: 20),
-                            _buildParentSection(), // <-- B
+                            _buildParentSection(),
                             const SizedBox(height: 20),
                             _buildSubmitButton(),
                           ],
@@ -1043,6 +1246,7 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
   // =========================================================================
   // ARAYÜZ BİLEŞENLERİ
   // =========================================================================
+
   Widget _buildModeToggle() {
     return Container(
       padding: const EdgeInsets.all(8),
@@ -1059,7 +1263,7 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
             child: GestureDetector(
               onTap: () {
                 setState(() {
-                  _mode = "update"; // 🔥 GÜNCELLE DEFAULT OLARAK AÇILSIN
+                  _mode = "update";
                   _selectedUser = null;
                   _clearForm();
                   _isSearching = true;
@@ -1313,10 +1517,9 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                const Icon(Icons.group, size: 18),
-                                const SizedBox(width: 8),
+                                Icon(Icons.group, size: 18),
+                                SizedBox(width: 8),
                                 Text(
-                                  // 🔥 Flexible KALDIRILDI
                                   group.name,
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -1363,12 +1566,10 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
                     filled: true,
                     fillColor: Colors.grey.shade50,
                   ),
-                  // 🔥 BUNU EKLE - Gereksiz rebuild'leri önler
                   maxLines: 1,
                   keyboardType: TextInputType.text,
                   textInputAction: TextInputAction.search,
                 ),
-
                 if (_searchResults.isNotEmpty)
                   Container(
                     margin: const EdgeInsets.only(top: 12),
@@ -1617,7 +1818,15 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
                   validator: _validatePassword,
                 ),
                 const SizedBox(height: 12),
-
+                if (_selectedRole == 'student' || _selectedRole == 'öğrenci')
+                  _buildTextField(
+                    _amountController,
+                    "Aylık Ücret (TL)",
+                    Icons.money,
+                    keyboardType: TextInputType.number,
+                    validator: _validateAmount,
+                  ),
+                const SizedBox(height: 12),
                 _buildDateField(),
                 const SizedBox(height: 12),
                 _buildCreatedDateField(),
@@ -1708,6 +1917,10 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
     );
   }
 
+  // =========================================================================
+  // SEÇİM BÖLÜMÜ (Yardımcı Antrenör Eklendi)
+  // =========================================================================
+
   Widget _buildSelectionSection() {
     return Container(
       decoration: BoxDecoration(
@@ -1730,54 +1943,63 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
               children: [
                 _buildRoleSelection(),
                 const SizedBox(height: 16),
-                if (_branches.isNotEmpty)
-                  _buildDropdown(
-                    label: "Şube Seç",
-                    value: _selectedBranchId,
-                    items: _branches
-                        .map(
-                          (b) => DropdownMenuItem(
-                            value: b.branches_id,
-                            child: Text(b.name),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (v) => setState(() => _selectedBranchId = v!),
-                  ),
-                const SizedBox(height: 12),
-                if (_sports.isNotEmpty)
-                  _buildDropdown(
-                    label: "Spor Dalı",
-                    value: _selectedSportId,
-                    items: _sports
-                        .map(
-                          (s) => DropdownMenuItem(
-                            value: s.sports_id,
-                            child: Text(s.name),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (v) => setState(() => _selectedSportId = v!),
-                  ),
-                const SizedBox(height: 12),
-                _buildDropdown(
-                  label: "Bağlı Grup",
-                  value: _selectedGroupId.isEmpty ? "none" : _selectedGroupId,
-                  items: [
-                    const DropdownMenuItem(
-                      value: "none",
-                      child: Text("-- Grup Seçilmedi --"),
+
+                // 🔥🔥🔥 YARDIMCI ANTRENÖR İSE SADECE BAĞLI HOCA GÖSTER 🔥🔥🔥
+                if (_selectedRole == 'assistant_coach') ...[
+                  _buildSupervisorDropdown(),
+                  const SizedBox(height: 12),
+                ] else ...[
+                  // Normal kullanıcılar için (Öğrenci, Veli, Antrenör)
+                  if (_branches.isNotEmpty)
+                    _buildDropdown(
+                      label: "Şube Seç",
+                      value: _selectedBranchId,
+                      items: _branches
+                          .map(
+                            (b) => DropdownMenuItem(
+                              value: b.branches_id,
+                              child: Text(b.name),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (v) => setState(() => _selectedBranchId = v!),
                     ),
-                    ..._groups.map(
-                      (g) => DropdownMenuItem(
-                        value: g.groups_id,
-                        child: Text(g.name),
+                  const SizedBox(height: 12),
+                  if (_sports.isNotEmpty)
+                    _buildDropdown(
+                      label: "Spor Dalı",
+                      value: _selectedSportId,
+                      items: _sports
+                          .map(
+                            (s) => DropdownMenuItem(
+                              value: s.sports_id,
+                              child: Text(s.name),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (v) => setState(() => _selectedSportId = v!),
+                    ),
+                  const SizedBox(height: 12),
+                  _buildDropdown(
+                    label: "Bağlı Grup",
+                    value: _selectedGroupId.isEmpty ? "none" : _selectedGroupId,
+                    items: [
+                      const DropdownMenuItem(
+                        value: "none",
+                        child: Text("-- Grup Seçilmedi --"),
                       ),
+                      ..._groups.map(
+                        (g) => DropdownMenuItem(
+                          value: g.groups_id,
+                          child: Text(g.name),
+                        ),
+                      ),
+                    ],
+                    onChanged: (v) => setState(
+                      () => _selectedGroupId = v == "none" ? "" : v!,
                     ),
-                  ],
-                  onChanged: (v) =>
-                      setState(() => _selectedGroupId = v == "none" ? "" : v!),
-                ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -1785,6 +2007,10 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
       ),
     );
   }
+
+  // =========================================================================
+  // ROL SEÇİMİ
+  // =========================================================================
 
   Widget _buildRoleSelection() {
     return Container(
@@ -1811,6 +2037,12 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
             subtitle: "Sporcu yönetimi ve ders takibi için",
             value: 'coach',
           ),
+          const Divider(height: 1),
+          _buildRadioTile(
+            title: "Yardımcı Antrenör",
+            subtitle: "Antrenöre bağlı çalışır",
+            value: 'assistant_coach',
+          ),
         ],
       ),
     );
@@ -1828,9 +2060,90 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
       groupValue: _selectedRole,
       activeColor: const Color(0xFF1E293B),
       contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-      onChanged: (val) => setState(() => _selectedRole = val.toString()),
+      onChanged: (val) {
+        setState(() {
+          _selectedRole = val.toString();
+          if (_selectedRole != 'assistant_coach' &&
+              _selectedRole != 'yardımcı_antrenör') {
+            _selectedSupervisorCoachId = '';
+          }
+        });
+      },
     );
   }
+
+  // =========================================================================
+  // YARDIMCI ANTRENÖR SEÇİM DROPDOWN'U
+  // =========================================================================
+
+  Widget _buildSupervisorDropdown() {
+    // Sadece 'coach' rolüne sahip kullanıcıları al
+    final coaches = _existingUsers
+        .where((u) => u.role.toLowerCase() == 'coach')
+        .toList();
+
+    if (coaches.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.amber.shade50,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.amber.shade200),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.amber),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                "Sistemde kayıtlı ana antrenör bulunamadı! Lütfen önce bir antrenör kaydedin.",
+                style: TextStyle(fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return DropdownButtonFormField<String>(
+      value: _selectedSupervisorCoachId.isEmpty
+          ? null
+          : _selectedSupervisorCoachId,
+      hint: const Text("Bağlı Olacağı Antrenörü Seç"),
+      decoration: InputDecoration(
+        labelText: "Bağlı Hoca",
+        prefixIcon: const Icon(
+          Icons.supervised_user_circle,
+          color: Color(0xFF1E293B),
+        ),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        filled: true,
+        fillColor: Colors.grey.shade50,
+      ),
+      items: coaches.map((coach) {
+        return DropdownMenuItem<String>(
+          value: coach.app,
+          child: Text(
+            "${coach.first_name} ${coach.last_name} (${coach.email})",
+          ),
+        );
+      }).toList(),
+      onChanged: (value) {
+        setState(() => _selectedSupervisorCoachId = value ?? '');
+      },
+      validator: (value) {
+        if (_selectedRole == 'assistant_coach' &&
+            (value == null || value.isEmpty)) {
+          return "Lütfen bağlı olacağınız antrenörü seçin!";
+        }
+        return null;
+      },
+    );
+  }
+
+  // =========================================================================
+  // DİĞER BİLEŞENLER
+  // =========================================================================
 
   Widget _buildHealthSection() {
     return Container(
@@ -1908,7 +2221,6 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                // ANNE BİLGİLERİ
                 Container(
                   margin: const EdgeInsets.only(bottom: 16),
                   decoration: BoxDecoration(
@@ -1966,12 +2278,10 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
                                 RegExp(r'[^0-9]'),
                                 '',
                               );
-                              if (cleaned.length != 11) {
+                              if (cleaned.length != 11)
                                 return "Telefon 11 haneli olmalı";
-                              }
-                              if (!cleaned.startsWith('05')) {
+                              if (!cleaned.startsWith('05'))
                                 return "05 ile başlamalı";
-                              }
                             }
                             return null;
                           },
@@ -1980,7 +2290,6 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
                     ],
                   ),
                 ),
-                // BABA BİLGİLERİ
                 Container(
                   decoration: BoxDecoration(
                     color: Colors.blue.shade50,
@@ -2037,12 +2346,10 @@ class _AdvancedSignUpPageState extends State<AdvancedSignUpPage> {
                                 RegExp(r'[^0-9]'),
                                 '',
                               );
-                              if (cleaned.length != 11) {
+                              if (cleaned.length != 11)
                                 return "Telefon 11 haneli olmalı";
-                              }
-                              if (!cleaned.startsWith('05')) {
+                              if (!cleaned.startsWith('05'))
                                 return "05 ile başlamalı";
-                              }
                             }
                             return null;
                           },

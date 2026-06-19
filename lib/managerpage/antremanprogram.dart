@@ -72,11 +72,9 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
     return _days[now.weekday - 1];
   }
 
-  // 🔥 DÜZELTİLDİ: manager_group.dart'daki _getCoachName ile aynı mantık
   String _getCoachName(String coachId) {
     if (coachId.isEmpty) return "Atanmamış";
 
-    // 1. Coach listesinde coach_id ile ara
     final coach = widget.coaches.firstWhere(
       (c) => c.coach_id == coachId,
       orElse: () => Coach(
@@ -93,7 +91,6 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
 
     if (coach.user_id.isEmpty) return "Atanmamış";
 
-    // 2. Bulduğumuz Coach'un user_id'si ile students listesinde ara
     final coachUser = widget.students.firstWhere(
       (u) => u.app == coach.user_id,
       orElse: () => Users(
@@ -131,49 +128,96 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
       'pazar': 7,
     };
 
-    schedule = schedule.trim();
+    if (schedule.isEmpty) return result;
 
-    final format1Regex = RegExp(
-      r'(\w+)\s*:\s*(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})',
-      caseSensitive: false,
-    );
+    // 🔥 1. Önce virgülle ayır
+    final parts = schedule.split(',');
 
-    final format1Matches = format1Regex.allMatches(schedule);
-    if (format1Matches.isNotEmpty) {
-      for (final match in format1Matches) {
-        final day = match.group(1)!.toLowerCase().trim();
-        final start = match.group(2)!.trim();
-        final end = match.group(3)!.trim();
-        if (dayMap.containsKey(day)) {
-          result.add({'day': dayMap[day]!, 'start': start, 'end': end});
+    // 🔥 2. Geçici değişkenler
+    String? pendingDays;
+    String? pendingTime;
+
+    for (var i = 0; i < parts.length; i++) {
+      var part = parts[i].trim();
+      if (part.isEmpty) continue;
+
+      // 🔥 3. "gün:saat" formatı mı?
+      final colonIndex = part.indexOf(':');
+      if (colonIndex != -1) {
+        // "cuma:08:30-10:00" formatı
+        final dayPart = part.substring(0, colonIndex).trim().toLowerCase();
+        final timePart = part.substring(colonIndex + 1).trim();
+
+        if (dayMap.containsKey(dayPart)) {
+          final timeParts = timePart.split('-');
+          if (timeParts.length == 2) {
+            final start = timeParts[0].trim();
+            final end = timeParts[1].trim();
+            if (start.isNotEmpty && end.isNotEmpty) {
+              result.add({'day': dayMap[dayPart]!, 'start': start, 'end': end});
+            }
+          }
         }
+        continue;
       }
-      return result;
-    }
 
-    if (schedule.contains(',')) {
-      final parts = schedule.split(',');
-      if (parts.length >= 2) {
-        final daysPart = parts[0].trim();
-        final timePart = parts.sublist(1).join(',').trim();
+      // 🔥 4. "pazartesi-salı-çarşamba" gün listesi mi?
+      final hasDay = dayMap.keys.any((d) => part.toLowerCase().contains(d));
+      if (hasDay) {
+        // Gün listesi
+        pendingDays = part;
 
-        final timeMatch = RegExp(
-          r'(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})',
-        ).firstMatch(timePart);
+        // 🔥 5. Bir sonraki parça saat mi? (virgülle ayrılmış)
+        if (i + 1 < parts.length) {
+          final nextPart = parts[i + 1].trim();
+          final timeMatch = RegExp(
+            r'^(\d{1,2}:\d{2})-(\d{1,2}:\d{2})$',
+          ).firstMatch(nextPart);
+          if (timeMatch != null) {
+            // Saat bulundu
+            final start = timeMatch.group(1)!;
+            final end = timeMatch.group(2)!;
+            pendingTime = '$start-$end';
+            i++; // Saati atla
+          }
+        }
 
-        if (timeMatch != null) {
-          final start = timeMatch.group(1)!;
-          final end = timeMatch.group(2)!;
-
-          final days = daysPart
+        // 🔥 6. Eğer saat varsa, günleri saatle eşleştir
+        if (pendingDays != null && pendingTime != null) {
+          final days = pendingDays!
               .split('-')
               .map((d) => d.trim().toLowerCase())
-              .where((d) => dayMap.containsKey(d))
               .toList();
-
-          for (final day in days) {
-            result.add({'day': dayMap[day]!, 'start': start, 'end': end});
+          final timeParts = pendingTime!.split('-');
+          for (var day in days) {
+            if (dayMap.containsKey(day)) {
+              result.add({
+                'day': dayMap[day]!,
+                'start': timeParts[0],
+                'end': timeParts[1],
+              });
+            }
           }
+          pendingDays = null;
+          pendingTime = null;
+        }
+      }
+    }
+
+    // 🔥 7. Eğer hala bekleyen günler ve saat varsa
+    if (pendingDays != null && pendingTime != null) {
+      final days = pendingDays!
+          .split('-')
+          .map((d) => d.trim().toLowerCase())
+          .toList();
+      final timeParts = pendingTime!.split('-');
+      for (var day in days) {
+        if (dayMap.containsKey(day)) {
+          result.add({
+            'day': dayMap[day]!,
+            'start': timeParts[0],
+            'end': timeParts[1],
+          });
         }
       }
     }
@@ -193,6 +237,7 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
       for (var schedule in schedules) {
         final dayInt = schedule['day'] as int;
         final dayIndex = dayInt - 1;
+        if (dayIndex < 0 || dayIndex >= _days.length) continue;
         final dayName = _days[dayIndex];
 
         _weeklySchedule.add({
@@ -208,10 +253,7 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
       }
     }
 
-    _weeklySchedule.sort(
-      (a, b) => (a['dayIndex'] as int).compareTo(b['dayIndex'] as int),
-    );
-
+    // Günlere göre grupla
     _groupedSchedule = {};
     for (var item in _weeklySchedule) {
       final day = item['day'] as String;
@@ -219,6 +261,13 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
         _groupedSchedule[day] = [];
       }
       _groupedSchedule[day]!.add(item);
+    }
+
+    // Her gün içinde saat sıralaması yap
+    for (var day in _groupedSchedule.keys) {
+      _groupedSchedule[day]!.sort((a, b) {
+        return (a['start'] as String).compareTo(b['start'] as String);
+      });
     }
   }
 
@@ -239,10 +288,22 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
       'Pazar': 'pazar',
     };
 
-    final existing = _parseSchedule(existingSchedule);
+    final dayNumMap = {
+      'pazartesi': 1,
+      'salı': 2,
+      'çarşamba': 3,
+      'perşembe': 4,
+      'cuma': 5,
+      'cumartesi': 6,
+      'pazar': 7,
+    };
 
+    // Mevcut programları parse et
+    final existing = _parseSchedule(existingSchedule);
     List<Map<String, dynamic>> entries = List.from(existing);
-    if (removeEntry != null) {
+
+    // 🔥 SİLİNECEK OLANI ÇIKAR
+    if (removeEntry != null && removeEntry.isNotEmpty) {
       final parts = removeEntry.split(':');
       if (parts.length == 2) {
         final dayTrKey = dayTr.entries
@@ -271,16 +332,7 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
       }
     }
 
-    final dayNumMap = {
-      'pazartesi': 1,
-      'salı': 2,
-      'çarşamba': 3,
-      'perşembe': 4,
-      'cuma': 5,
-      'cumartesi': 6,
-      'pazar': 7,
-    };
-
+    // 🔥 YENİ PROGRAMLARI EKLE
     for (final dayName in selectedDayNames) {
       final trDay = dayTr[dayName] ?? '';
       if (trDay.isEmpty) continue;
@@ -301,12 +353,13 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
       });
 
       if (!alreadyExists) {
-        entries.add({'day': dayNumMap[trDay], 'start': start, 'end': end});
+        entries.add({'day': dayNumMap[trDay]!, 'start': start, 'end': end});
       }
     }
 
     if (entries.isEmpty) return '';
 
+    // 🔥 PROGRAMLARI FORMATLA (GÜN VE SAAT GRUPLAMA)
     final Map<String, List<String>> timeTodays = {};
     final dayNumToTr = {
       1: 'pazartesi',
@@ -430,6 +483,7 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
                 await widget.onScheduleUpdated!(group.groups_id, newSchedule);
               }
 
+              // 🔥 GRUBU GÜNCELLE
               setState(() {
                 final idx = _groups.indexWhere(
                   (g) => g.groups_id == group.groups_id,
@@ -447,6 +501,7 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
                     is_active: group.is_active,
                   );
                 }
+                // 🔥 VERİLERİ YENİDEN YÜKLE
                 _loadSchedule();
               });
 
@@ -908,6 +963,7 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
 
     return Column(
       children: [
+        // HEADER KISMI (AYNI)
         Container(
           padding: const EdgeInsets.all(16),
           color: _surface,
@@ -982,43 +1038,23 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
           ),
         ),
         const SizedBox(height: 12),
-        Expanded(
-          child: selectedDayItems.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.sports, size: 48, color: _textTertiary),
-                      const SizedBox(height: 12),
-                      Text(
-                        "Bu günde antrenman yok",
-                        style: TextStyle(color: _textSecondary),
-                      ),
-                      const SizedBox(height: 16),
-                      OutlinedButton.icon(
-                        onPressed: () => _showGroupPickerForDay(_selectedDay),
-                        icon: const Icon(Icons.add, size: 18),
-                        label: const Text('Program Ekle'),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: _accent,
-                          side: const BorderSide(color: _accent),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 80),
-                  itemCount: selectedDayItems.length,
-                  itemBuilder: (context, index) {
-                    final item = selectedDayItems[index];
 
-                    return Dismissible(
+        // 🔥 LİSTE + PROGRAM EKLE BUTONU
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Column(
+              children: [
+                // MEVCUT PROGRAMLAR
+                if (selectedDayItems.isNotEmpty) ...[
+                  for (
+                    var index = 0;
+                    index < selectedDayItems.length;
+                    index++
+                  ) ...[
+                    Dismissible(
                       key: Key(
-                        '${item['groupId']}_${item['day']}_${item['time']}',
+                        'schedule_${index}_${selectedDayItems[index]['groupId']}',
                       ),
                       direction: DismissDirection.endToStart,
                       background: Container(
@@ -1036,7 +1072,7 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
                         ),
                       ),
                       confirmDismiss: (direction) async {
-                        _deleteScheduleEntry(item);
+                        _deleteScheduleEntry(selectedDayItems[index]);
                         return false;
                       },
                       child: Container(
@@ -1057,7 +1093,9 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
                           color: Colors.transparent,
                           child: InkWell(
                             borderRadius: BorderRadius.circular(20),
-                            onTap: () => _showGroupScheduleOptions(item),
+                            onTap: () => _showGroupScheduleOptions(
+                              selectedDayItems[index],
+                            ),
                             child: Padding(
                               padding: const EdgeInsets.all(16),
                               child: Row(
@@ -1088,7 +1126,7 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
                                           CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          item['groupName'],
+                                          selectedDayItems[index]['groupName'],
                                           style: const TextStyle(
                                             fontWeight: FontWeight.bold,
                                             fontSize: 16,
@@ -1105,7 +1143,8 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
                                             ),
                                             const SizedBox(width: 4),
                                             Text(
-                                              item['coachName'] ?? "Atanmamış",
+                                              selectedDayItems[index]['coachName'] ??
+                                                  "Atanmamış",
                                               style: TextStyle(
                                                 fontSize: 11,
                                                 color: _orange,
@@ -1124,7 +1163,7 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
                                             ),
                                             const SizedBox(width: 4),
                                             Text(
-                                              item['time'],
+                                              selectedDayItems[index]['time'],
                                               style: TextStyle(
                                                 color: _accent,
                                                 fontWeight: FontWeight.w500,
@@ -1159,9 +1198,53 @@ class _WeeklyTrainingScreenState extends State<WeeklyTrainingScreen>
                           ),
                         ),
                       ),
-                    );
-                  },
+                    ),
+                  ],
+                ],
+
+                // 🔥 PROGRAM EKLE BUTONU (HER ZAMAN GÖSTER)
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () => _showGroupPickerForDay(_selectedDay),
+                  icon: const Icon(Icons.add, size: 18),
+                  label: Text(
+                    selectedDayItems.isEmpty
+                        ? 'Program Ekle'
+                        : 'Başka Grup Ekle',
+                    style: const TextStyle(fontWeight: FontWeight.w500),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _accent,
+                    side: const BorderSide(color: _accent),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
+                  ),
                 ),
+
+                // 🔥 HİÇ PROGRAM YOKSA BİLGİ MESAJI
+                if (selectedDayItems.isEmpty) ...[
+                  const SizedBox(height: 40),
+                  Center(
+                    child: Column(
+                      children: [
+                        Icon(Icons.sports, size: 48, color: _textTertiary),
+                        const SizedBox(height: 12),
+                        Text(
+                          "Bu günde antrenman yok",
+                          style: TextStyle(color: _textSecondary),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ),
       ],
     );

@@ -4,6 +4,10 @@ import 'dart:io' show Platform;
 
 import 'package:EVOM_SPOR/datapage/fetch_data_page.dart';
 import 'package:EVOM_SPOR/core/app_repository.dart';
+import 'package:EVOM_SPOR/internet/internet_check.dart';
+import 'package:EVOM_SPOR/internet/internt_close.dart';
+import 'package:EVOM_SPOR/internet/network_aware_wrapper.dart';
+import 'package:EVOM_SPOR/managerpage/manager_offline/offline_attendance_service.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/date_symbol_data_local.dart';
@@ -34,11 +38,11 @@ final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
 const String GITHUB_USERNAME = "Ahmetoguzz7";
 const String GITHUB_REPO = "EVOM_SPOR";
 const String _baseUrl =
-    "https://script.google.com/macros/s/AKfycby3EW0jopQmtAZf-v_TVW8oNUS7BANs6EuMgAi4bisyz07gtlWqAQtPFIF6eIIf_cTXRg/exec";
+    "https://script.google.com/macros/s/AKfycbyPokHSOEp08uz2SgbQ6z7LFwZ2P6mMb77XmQZAzZNYsRSxnpKohgkP3uPmAALk96RhMg/exec";
 
 const String backgroundUpdateTask = "updateCheckTask";
 const String backgroundNotificationTask = "notificationCheckTask";
-
+const String backgroundAttendanceSyncTask = "attendanceSyncTask";
 // ============================================================
 // 🔥 FIREBASE ARKA PLAN HANDLER
 // ============================================================
@@ -80,13 +84,16 @@ void callbackDispatcher() {
       await checkForUpdateBackground();
     } else if (taskName == backgroundNotificationTask) {
       await checkForNewNotificationsBackground();
+    } else if (taskName == backgroundAttendanceSyncTask) {
+      // YENİ
+      await syncAttendancesInBackground();
     }
     return Future.value(true);
   });
 }
 
 // ============================================================
-// MAIN
+// MAIN - İNTERNET KONTROLLÜ
 // ============================================================
 
 void main() async {
@@ -99,6 +106,56 @@ void main() async {
     Intl.defaultLocale = 'tr_TR';
   }
 
+  // Önce internet kontrolü yap
+  final hasInternet = await _checkInternetOnStart();
+
+  // UI başlat
+  runApp(MyApp(initialHasInternet: hasInternet));
+
+  // Arka plan işlemleri (UI bloklanmasın)
+  unawaited(_initializeAppInBackground());
+}
+
+// 🔥 BAŞLANGIÇTA İNTERNET KONTROLÜ
+Future<bool> _checkInternetOnStart() async {
+  try {
+    final results = await Connectivity().checkConnectivity();
+    final hasInternet = results != ConnectivityResult.none;
+
+    if (hasInternet) {
+      // Gerçek internet kontrolü için küçük bir ping at
+      try {
+        final response = await http
+            .get(Uri.parse("$_baseUrl?sheet=users&limit=1"))
+            .timeout(const Duration(seconds: 5));
+        return response.statusCode == 200;
+      } catch (_) {
+        return false;
+      }
+    }
+    return false;
+  } catch (e) {
+    return false;
+  }
+}
+
+Future<void> syncAttendancesInBackground() async {
+  try {
+    // Servisi başlat ve kuyruğu işle
+    final service = OfflineAttendanceService();
+    await service.init();
+    await service.processQueueNow();
+  } catch (e) {
+    // Sessiz geç
+  }
+}
+
+// Arka planda başlatılacak tüm işlemler
+Future<void> _initializeAppInBackground() async {
+  // Internet checker dinleyicisi
+  final internetChecker = InternetChecker();
+  internetChecker.startListening();
+
   // Firebase başlat
   await Firebase.initializeApp();
 
@@ -106,64 +163,68 @@ void main() async {
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
   // İzinler
-  await requestPermissions();
+  unawaited(requestPermissions());
 
   // Bildirim servisi
-  await initNotifications();
+  unawaited(initNotifications());
 
-  // Firebase ön plan dinleyiciler
-  FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-    if (message.notification != null) {
-      flutterLocalNotificationsPlugin.show(
-        id: message.hashCode,
-        title: message.notification?.title ?? 'Bildirim',
-        body: message.notification?.body ?? '',
-        notificationDetails: NotificationDetails(
-          android: AndroidNotificationDetails(
-            'app_notifications',
-            'Uygulama Bildirimleri',
-            importance: Importance.high,
-          ),
-          iOS: const DarwinNotificationDetails(
-            presentAlert: true,
-            presentBadge: true,
-            presentSound: true,
-          ),
-        ),
-      );
-    }
-  });
+  // Firebase topic
+  _subscribeToTopicWithTimeout();
 
-  FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-    navigatorKey.currentState?.pushNamed('/notifications');
-  });
-
-  // Token kaydet
-  String? token = await FirebaseMessaging.instance.getToken();
-  if (token != null) {
-    await _saveTokenToServer(token);
-  }
-
-  FirebaseMessaging.instance.onTokenRefresh.listen((newToken) {
-    _saveTokenToServer(newToken);
-  });
-
-  await FirebaseMessaging.instance.subscribeToTopic("all_users");
+  // Token işlemleri
+  _setupFirebaseTokenHandling();
 
   // Arka plan görevleri
-  await initBackgroundTask();
+  unawaited(initBackgroundTask());
 
   // Güncelleme kontrolü
-  Future.delayed(const Duration(seconds: 3), () {
-    checkForUpdateWithNotification();
-  });
+  _scheduleUpdateCheck();
 
   if (Platform.isIOS) {
     _startIOSPeriodicCheck();
   }
+}
 
-  // 🔥 SPLASHSCREEN KALDIRILDI! Doğrudan Login sayfası açılıyor
-  runApp(const MyApp());
+// ============================================================
+// TOPIC SUBSCRIBE
+// ============================================================
+
+void _subscribeToTopicWithTimeout() {
+  Future.delayed(Duration.zero, () {
+    FirebaseMessaging.instance
+        .subscribeToTopic("all_users")
+        .timeout(
+          const Duration(seconds: 3),
+          onTimeout: () {
+            debugPrint("⚠️ Topic subscribe timeout - skipping");
+            return;
+          },
+        )
+        .catchError((e) {
+          debugPrint("⚠️ Topic subscribe error: $e");
+        });
+  });
+}
+
+// ============================================================
+// FIREBASE TOKEN HANDLING
+// ============================================================
+
+void _setupFirebaseTokenHandling() async {
+  Future.delayed(const Duration(milliseconds: 500), () async {
+    try {
+      String? token = await FirebaseMessaging.instance.getToken();
+      if (token != null) {
+        await _saveTokenToServer(token);
+      }
+    } catch (e) {
+      debugPrint("⚠️ Token alınamadı: $e");
+    }
+  });
+
+  FirebaseMessaging.instance.onTokenRefresh.listen((newToken) {
+    _saveTokenToServer(newToken);
+  });
 }
 
 // ============================================================
@@ -189,8 +250,22 @@ Future<void> _saveTokenToServer(String token) async {
             'fcm_token': token,
           }),
         )
-        .timeout(const Duration(seconds: 10));
-  } catch (e) {}
+        .timeout(const Duration(seconds: 5));
+  } catch (e) {
+    // Sessizce başarısız ol
+  }
+}
+
+// ============================================================
+// GÜNCELLEME KONTROL
+// ============================================================
+
+void _scheduleUpdateCheck() {
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    Future.delayed(const Duration(seconds: 2), () {
+      checkForUpdateWithNotification();
+    });
+  });
 }
 
 // ============================================================
@@ -222,7 +297,9 @@ Future<void> requestPermissions() async {
         await Permission.scheduleExactAlarm.request();
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    // Sessiz geç
+  }
 }
 
 // ============================================================
@@ -279,7 +356,9 @@ Future<void> initNotifications() async {
         ),
       );
     }
-  } catch (e) {}
+  } catch (e) {
+    // Sessiz geç
+  }
 }
 
 // ============================================================
@@ -330,7 +409,7 @@ Future<void> checkForNewNotificationsBackground() async {
 
     final response = await http
         .get(Uri.parse("$_baseUrl?sheet=notifications"))
-        .timeout(const Duration(seconds: 15));
+        .timeout(const Duration(seconds: 10));
     if (response.statusCode != 200) return;
 
     final decoded = json.decode(response.body);
@@ -373,7 +452,9 @@ Future<void> checkForNewNotificationsBackground() async {
       'last_notification_check',
       DateTime.now().toIso8601String(),
     );
-  } catch (e) {}
+  } catch (e) {
+    // Sessiz geç
+  }
 }
 
 DateTime _parseDateTime(String dateTimeStr) {
@@ -431,7 +512,9 @@ Future<void> showAppNotification({
       notificationDetails: NotificationDetails(android: android, iOS: ios),
       payload: payload,
     );
-  } catch (e) {}
+  } catch (e) {
+    // Sessiz geç
+  }
 }
 
 Future<String> getCurrentVersion() async {
@@ -472,7 +555,9 @@ Future<Map<String, dynamic>?> getLatestReleaseFromGitHub() async {
         };
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    // Sessiz geç
+  }
   return null;
 }
 
@@ -496,7 +581,9 @@ Future<void> downloadAndInstallApk(String url) async {
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
-  } catch (e) {}
+  } catch (e) {
+    // Sessiz geç
+  }
 }
 
 Future<void> initBackgroundTask() async {
@@ -504,6 +591,8 @@ Future<void> initBackgroundTask() async {
 
   try {
     await Workmanager().initialize(callbackDispatcher, isInDebugMode: false);
+
+    // Mevcut task'ler...
     await Workmanager().registerPeriodicTask(
       "updateCheckPeriodic",
       backgroundUpdateTask,
@@ -513,13 +602,24 @@ Future<void> initBackgroundTask() async {
         requiresBatteryNotLow: true,
       ),
     );
+
     await Workmanager().registerPeriodicTask(
       "notificationCheckPeriodic",
       backgroundNotificationTask,
       frequency: const Duration(minutes: 15),
       constraints: Constraints(networkType: NetworkType.connected),
     );
-  } catch (e) {}
+
+    // 🆕 YOKLAMA SENKRONİZASYONU (15 dakikada bir)
+    await Workmanager().registerPeriodicTask(
+      "attendanceSyncPeriodic",
+      backgroundAttendanceSyncTask,
+      frequency: const Duration(minutes: 15),
+      constraints: Constraints(networkType: NetworkType.connected),
+    );
+  } catch (e) {
+    // Sessiz geç
+  }
 }
 
 // ============================================================
@@ -615,11 +715,58 @@ class ForceUpdateScreen extends StatelessWidget {
 }
 
 // ============================================================
-// 🔥 MY APP - SPLASHSCREEN YOK! DOĞRUDAN LOGİN
+// MY APP - İNTERNET KONTROLLÜ
 // ============================================================
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class MyApp extends StatefulWidget {
+  final bool initialHasInternet;
+  const MyApp({super.key, required this.initialHasInternet});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  late bool _hasInternet;
+  late InternetChecker _internetChecker;
+
+  @override
+  void initState() {
+    super.initState();
+    _hasInternet = widget.initialHasInternet;
+    _internetChecker = InternetChecker();
+    _internetChecker.startListening();
+
+    // İnternet durumu değişikliklerini dinle
+    _internetChecker.onInternetGained(() {
+      if (mounted) {
+        setState(() {
+          _hasInternet = true;
+        });
+        // İnternet geldiğinde otomatik yenile
+        _onInternetGained();
+      }
+    });
+
+    _internetChecker.onInternetLost(() {
+      if (mounted) {
+        setState(() {
+          _hasInternet = false;
+        });
+      }
+    });
+  }
+
+  void _onInternetGained() {
+    // İnternet geldiğinde yapılacak işlemler
+    print("🌐 İnternet bağlantısı sağlandı, otomatik yenileme yapılıyor...");
+  }
+
+  void _onRetry() {
+    setState(() {
+      _hasInternet = true;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -631,14 +778,14 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
         useMaterial3: true,
       ),
-      home: const UnifiedLoginPage(), // 🔥 SPLASHSCREEN YOK! DOĞRUDAN LOGİN
+      home: const NetworkAwareWrapper(child: UnifiedLoginPage()),
       routes: {'/notifications': (context) => const NotificationsPage()},
     );
   }
 }
 
 // ============================================================
-// NOTIFICATIONS PAGE (BASİT)
+// NOTIFICATIONS PAGE
 // ============================================================
 
 class NotificationsPage extends StatelessWidget {

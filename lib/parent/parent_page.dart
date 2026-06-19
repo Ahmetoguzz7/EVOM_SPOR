@@ -7,6 +7,7 @@ import 'package:EVOM_SPOR/parent/parent_student_attandence.dart';
 import 'package:EVOM_SPOR/parent/veli_payment_page.dart';
 import 'package:EVOM_SPOR/ptpage/student_interface.dart';
 import 'package:EVOM_SPOR/unifiedLoginPage.dart';
+import 'package:EVOM_SPOR/userInterfacepage/notifications/pt_natifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class VeliAnaSayfa extends StatefulWidget {
@@ -28,18 +29,20 @@ class _VeliAnaSayfaState extends State<VeliAnaSayfa> {
   // 🔥 Cache için
   Map<String, Map<String, dynamic>> _statsCache = {};
 
+  // 📢 BİLDİRİMLER İÇİN DEĞİŞKENLER
+  List<Notifications> _recentNotifications = [];
+  int _unreadNotificationCount = 0;
+  bool _notificationsLoaded = false;
+
   @override
   void initState() {
     super.initState();
     _dataFuture = _verileriParalelGetir();
   }
 
-  // 🚀 PARALEL VERİ ÇEKME (ÇOK HIZLI!)
+  // 🚀 PARALEL VERİ ÇEKME
   Future<Map<String, dynamic>> _verileriParalelGetir() async {
-    final stopwatch = Stopwatch()..start();
-
     try {
-      // 🔥 TÜM VERİLERİ PARALEL OLARAK ÇEK (3 işlem aynı anda!)
       final results = await Future.wait([
         GoogleSheetService.getStudentsByParent(widget.veli.app),
         GoogleSheetService.getUsersCached(),
@@ -50,18 +53,13 @@ class _VeliAnaSayfaState extends State<VeliAnaSayfa> {
       final allUsers = results[1] as List<Users>;
       final allAttendances = results[2] as List<Attendance>;
 
-      stopwatch.stop();
-      /* print(
-        "⏱️ VeliAnaSayfa verileri PARALEL olarak ${stopwatch.elapsedMilliseconds}ms'de yüklendi",
-      );*/
-
       List<String> myIds = studentsByParent.map((ps) => ps.student_id).toList();
       List<Users> cocuklarList = [];
 
       if (myIds.isNotEmpty) {
         cocuklarList = allUsers.where((u) => myIds.contains(u.app)).toList();
 
-        // 🔥 TÜM ÇOCUKLARIN İSTATİSTİKLERİNİ ÖNCEDEN HESAPLA
+        // İstatistikleri hesapla
         for (var cocuk in cocuklarList) {
           final cocukYoklamalari = allAttendances
               .where((a) => a.student_id == cocuk.app)
@@ -79,6 +77,44 @@ class _VeliAnaSayfaState extends State<VeliAnaSayfa> {
             'rate': rate,
           };
         }
+
+        // 🔥 BİLDİRİMLERİ GETİR (VELİ İÇİN OTOMATİK FİLTRELENMİŞ)
+        final filteredNotifications =
+            await GoogleSheetService.getNotificationsForUser(widget.veli.app);
+
+        // Map'leri Notifications objesine çevir
+        final List<Notifications> allNotifications = filteredNotifications.map((
+          item,
+        ) {
+          return Notifications(
+            notifications_id: item['notifications_id']?.toString() ?? '',
+            sender_id: item['sender_id']?.toString() ?? '',
+            recipient_id: item['recipient_id']?.toString() ?? '',
+            title: item['title']?.toString() ?? '',
+            message: item['message']?.toString() ?? '',
+            type: item['type']?.toString() ?? 'announcement',
+            is_read: item['is_read']?.toString() ?? 'FALSE',
+            sent_at: item['sent_at']?.toString() ?? '',
+            groups_id: item['groups_id']?.toString() ?? '',
+          );
+        }).toList();
+
+        // SON 7 GÜN FİLTRESİ
+        final sevenDaysAgo = DateTime.now().subtract(const Duration(days: 7));
+        final filteredByDate = allNotifications.where((notif) {
+          if (notif.sent_at.isEmpty || notif.sent_at == 'null') return false;
+          final notifDate = DateTime.tryParse(notif.sent_at);
+          if (notifDate == null) return false;
+          return notifDate.isAfter(sevenDaysAgo);
+        }).toList();
+
+        setState(() {
+          _recentNotifications = filteredByDate.take(3).toList();
+          _unreadNotificationCount = filteredByDate
+              .where((n) => n.is_read?.toLowerCase() != "true")
+              .length;
+          _notificationsLoaded = true;
+        });
       }
 
       return {'cocuklar': cocuklarList, 'success': true};
@@ -296,6 +332,265 @@ class _VeliAnaSayfaState extends State<VeliAnaSayfa> {
     );
   }
 
+  void _openNotificationsPage(BuildContext context) async {
+    if (!context.mounted) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DuyurularPage(currentUser: widget.veli),
+      ),
+    );
+  }
+
+  IconData _getIconForNotif(String? type) {
+    switch (type?.toLowerCase()) {
+      case 'payment_reminder':
+        return Icons.account_balance_wallet;
+      case 'urgent':
+        return Icons.priority_high;
+      case 'announcement':
+        return Icons.emoji_events;
+      case 'attendance_alert':
+        return Icons.cancel;
+      default:
+        return Icons.notifications;
+    }
+  }
+
+  Color _getIconColorForNotif(String? type) {
+    switch (type?.toLowerCase()) {
+      case 'payment_reminder':
+        return Colors.orange;
+      case 'urgent':
+        return Colors.red;
+      case 'announcement':
+        return Colors.green;
+      case 'attendance_alert':
+        return Colors.purple;
+      default:
+        return Colors.blue;
+    }
+  }
+
+  String _formatRelativeDateTurkish(String? dateStr) {
+    if (dateStr == null || dateStr.isEmpty) return "Şimdi";
+    try {
+      final date = DateTime.parse(dateStr);
+      final now = DateTime.now();
+      final diff = now.difference(date);
+      if (diff.inDays > 30) {
+        return DateFormat('dd MMM yyyy', 'tr_TR').format(date);
+      }
+      if (diff.inDays > 0) {
+        return diff.inDays == 1 ? "Dün" : "${diff.inDays} gün önce";
+      }
+      if (diff.inHours > 0) {
+        return "${diff.inHours} saat önce";
+      }
+      if (diff.inMinutes > 0) {
+        return "${diff.inMinutes} dakika önce";
+      }
+      return "Az önce";
+    } catch (e) {
+      return dateStr;
+    }
+  }
+
+  Widget _buildNotificationCardForHome(Notifications notif) {
+    bool isUrgent = notif.type?.toLowerCase() == "urgent";
+    bool isUnread = notif.is_read?.toLowerCase() != "true";
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: isUnread ? Colors.blue.shade50 : Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: isUrgent
+            ? Border.all(color: Colors.red.shade200, width: 1)
+            : (isUnread
+                  ? Border.all(color: Colors.blue.shade200, width: 1)
+                  : null),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 3,
+            height: 32,
+            decoration: BoxDecoration(
+              color: isUrgent
+                  ? Colors.red
+                  : (isUnread ? Colors.blue : Colors.grey),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: _getIconColorForNotif(notif.type).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              _getIconForNotif(notif.type),
+              color: _getIconColorForNotif(notif.type),
+              size: 18,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        notif.title,
+                        style: TextStyle(
+                          fontWeight: isUnread
+                              ? FontWeight.w600
+                              : FontWeight.w500,
+                          fontSize: 12,
+                          color: isUrgent
+                              ? Colors.red.shade800
+                              : Colors.black87,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (isUrgent)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade100,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text(
+                          "Acil",
+                          style: TextStyle(
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.red,
+                          ),
+                        ),
+                      ),
+                    if (isUnread && !isUrgent)
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: Colors.blue,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  notif.message,
+                  style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _formatRelativeDateTurkish(notif.sent_at),
+                  style: TextStyle(fontSize: 9, color: Colors.grey[400]),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNotificationsSection() {
+    if (_recentNotifications.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.blue.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.campaign, size: 16, color: Colors.blue.shade700),
+              const SizedBox(width: 6),
+              Text(
+                "Son 7 Günün Duyuruları",
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.blue.shade700,
+                ),
+              ),
+              const Spacer(),
+              if (_unreadNotificationCount > 0) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade100,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    "$_unreadNotificationCount",
+                    style: TextStyle(
+                      fontSize: 9,
+                      color: Colors.red.shade700,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 8),
+          ..._recentNotifications.map(
+            (notif) => _buildNotificationCardForHome(notif),
+          ),
+          const SizedBox(height: 6),
+          GestureDetector(
+            onTap: () => _openNotificationsPage(context),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Text(
+                  "Tüm duyuruları gör",
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: Colors.blue.shade600,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                Icon(
+                  Icons.arrow_forward,
+                  size: 10,
+                  color: Colors.blue.shade600,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -369,10 +664,8 @@ class _VeliAnaSayfaState extends State<VeliAnaSayfa> {
             return _buildEmptyState();
           }
 
-          // Verileri güncelle
           if (cocuklar != cocuklarList) {
             cocuklar = cocuklarList;
-            // İlk çocuğun istatistiklerini ayarla
             if (cocuklar.isNotEmpty &&
                 _statsCache.containsKey(cocuklar[0].app)) {
               _seciliCocukIstatistik = _statsCache[cocuklar[0].app]!;
@@ -412,7 +705,10 @@ class _VeliAnaSayfaState extends State<VeliAnaSayfa> {
                   ),
                   const SizedBox(height: 20),
                   _buildStatsCard(),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 16),
+                  if (_notificationsLoaded && _recentNotifications.isNotEmpty)
+                    _buildNotificationsSection(),
+                  const SizedBox(height: 16),
                   _buildMenuGrid(cocuklar[_seciliCocukIndex]),
                   const SizedBox(height: 100),
                 ],
@@ -420,6 +716,11 @@ class _VeliAnaSayfaState extends State<VeliAnaSayfa> {
             ),
           );
         },
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _cocukEkleDialog,
+        backgroundColor: Colors.orange,
+        child: const Icon(Icons.person_add, color: Colors.white),
       ),
     );
   }
@@ -656,14 +957,10 @@ class _VeliAnaSayfaState extends State<VeliAnaSayfa> {
                 ),
               ),
               _buildMenuItem(
-                "Gelişim Raporu",
-                Icons.bar_chart,
+                "Duyurular",
+                Icons.campaign,
                 Colors.purple,
-                () {
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(const SnackBar(content: Text("Yakında...")));
-                },
+                () => _openNotificationsPage(context),
               ),
               _buildMenuItem(
                 "Antrenör Notları",
@@ -748,34 +1045,76 @@ class _VeliAnaSayfaState extends State<VeliAnaSayfa> {
   }
 
   Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade100,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              Icons.people_outline,
-              size: 64,
-              color: Colors.grey.shade400,
-            ),
-          ),
-          const SizedBox(height: 24),
-          const Text(
-            "Bağlı Sporcu Bulunamadı",
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            "Sağ alt köşedeki + butonu ile\nsporcu ekleyebilirsiniz",
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey.shade500),
+    return Scaffold(
+      backgroundColor: const Color(0xFFF1F5F9),
+      appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.logout, color: Colors.redAccent),
+          onPressed: () async {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.remove('saved_email');
+            await prefs.remove('saved_password');
+            await prefs.setBool('remember_me', false);
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (_) => const UnifiedLoginPage()),
+              (route) => false,
+            );
+          },
+        ),
+        title: const Text(
+          "Veli Paneli",
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        centerTitle: true,
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () {
+              setState(() {
+                _dataFuture = _verileriParalelGetir();
+              });
+            },
           ),
         ],
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.people_outline,
+                size: 64,
+                color: Colors.grey.shade400,
+              ),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              "Bağlı Sporcu Bulunamadı",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              "Sağ alt köşedeki + butonu ile\nsporcu ekleyebilirsiniz",
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey.shade500),
+            ),
+          ],
+        ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _cocukEkleDialog,
+        backgroundColor: Colors.orange,
+        child: const Icon(Icons.person_add, color: Colors.white),
       ),
     );
   }

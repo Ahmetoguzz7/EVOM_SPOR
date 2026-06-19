@@ -1,7 +1,9 @@
 import 'package:EVOM_SPOR/core/app_repository.dart';
 import 'package:EVOM_SPOR/managerpage/antremanprogram.dart';
+import 'package:EVOM_SPOR/managerpage/daily_payment.dart';
 import 'package:EVOM_SPOR/managerpage/payment_history.dart';
 import 'package:EVOM_SPOR/managerpage/student_P&A.dart';
+import 'package:EVOM_SPOR/managerpage/student_tarihli_attandance.dart';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -170,6 +172,52 @@ class _AdminDashboardState extends State<AdminDashboard> {
         'upcomingBirthdays': <Users>[],
       };
     }
+  } // _getCoachNameFromGroup metodunu _buildTodayTrainingCard'dan ÖNCE ekle
+
+  String _getCoachNameFromGroup(String coachId) {
+    if (coachId.isEmpty) return "Atanmamış";
+
+    // 1. Coach listesinde coach_id ile ara
+    final coach = _allCoachesList.firstWhere(
+      (c) => c.coach_id == coachId,
+      orElse: () => Coach(
+        coach_id: "",
+        user_id: "",
+        branches_id: "",
+        sports_id: "",
+        bio: "",
+        certificate_info: "",
+        monthly_salary: "",
+        hired_at: "",
+      ),
+    );
+
+    if (coach.user_id.isEmpty) return "Atanmamış";
+
+    // 2. Coach'un user_id'si ile _allUsers'da ara
+    final coachUser = _allUsers.firstWhere(
+      (u) => u.app == coach.user_id,
+      orElse: () => Users(
+        app: "",
+        branches_id: "",
+        first_name: "",
+        last_name: "",
+        email: "",
+        phone: "",
+        password_hash: "",
+        role: "",
+        profile_photo_url: "",
+        amount: "",
+        b_date: "",
+        created_at: "",
+        last_login: "",
+        is_active: "",
+      ),
+    );
+
+    if (coachUser.first_name.isEmpty) return "Atanmamış";
+
+    return "${coachUser.first_name} ${coachUser.last_name}".trim();
   }
 
   Widget _buildTodayTrainingCard() {
@@ -197,7 +245,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Başlık
           const Row(
             children: [
               Icon(Icons.sports, color: Colors.orange, size: 20),
@@ -209,35 +256,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
             ],
           ),
           const SizedBox(height: 12),
-          // Antrenman Listesi
           ...todaysGroups.map((group) {
             final scheduleToday = _getGroupScheduleForDay(group, todayName);
-
-            // Antrenör ismini al
-            String coachName = "Atanmamış";
-            final coachUser = _allUsers.firstWhere(
-              (user) => user.app.toString() == group.coach_id.toString(),
-              orElse: () => Users(
-                app: "",
-                branches_id: "",
-                first_name: "",
-                last_name: "",
-                email: "",
-                phone: "",
-                password_hash: "",
-                role: "",
-                profile_photo_url: "",
-                amount: "",
-                b_date: "",
-                created_at: "",
-                last_login: "",
-                is_active: "",
-              ),
-            );
-            if (coachUser.first_name.isNotEmpty) {
-              coachName = "${coachUser.first_name} ${coachUser.last_name}"
-                  .trim();
-            }
+            final coachName = _getCoachNameFromGroup(
+              group.coach_id,
+            ); // 🔥 DÜZELTİLDİ
 
             return Container(
               margin: const EdgeInsets.only(bottom: 10),
@@ -249,7 +272,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
               ),
               child: Row(
                 children: [
-                  // Grup İkonu
                   Container(
                     width: 45,
                     height: 45,
@@ -264,12 +286,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  // Bilgiler
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Grup Adı
                         Text(
                           group.name,
                           style: const TextStyle(
@@ -280,7 +300,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
                           overflow: TextOverflow.ellipsis,
                         ),
                         const SizedBox(height: 4),
-                        // Antrenör (tek satırda)
                         Row(
                           children: [
                             const Icon(
@@ -305,7 +324,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
                       ],
                     ),
                   ),
-                  // Saat
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 10,
@@ -487,7 +505,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   const SizedBox(height: 12),
                   _buildStatsRow2(totalGroups, monthlyIncome),
                   const SizedBox(height: 20),
-                  _buildTodayTrainingCard(),
+                  // _buildTodayTrainingCard(),
                   _buildAnnouncementsCard(recentNotifications),
                   const SizedBox(height: 16),
                   _buildBirthdaysCard(upcomingBirthdays),
@@ -982,14 +1000,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
         "color": Colors.purple,
         "route": "notification",
       },
-      {
-        "title": "Ödeme Hatırlatma",
-        "subtitle":
-            "Öğrencilerin kayıt olma tarihlerine göre ödeme yapılmayan öğrencileri takip edebilirsiniz.",
-        "icon": Icons.notifications_active,
-        "color": Colors.red,
-        "route": "payment_reminder",
-      },
+
       {
         "title": "Antrenman Programı",
         "subtitle":
@@ -1000,12 +1011,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
       },
 
       {
-        "title": "Raporlar",
-        "icon": Icons.bar_chart,
-        "color": Colors.indigo,
-        "route": "reports",
-      },
-      {
         "title": "Grup Yönetimi",
         "subtitle":
             "Grupları görüntüleyebilir öğrencilerin gruplarını değiştirebiir ve yeni grup ekleyebilirsiniz.",
@@ -1014,12 +1019,35 @@ class _AdminDashboardState extends State<AdminDashboard> {
         "route": "group",
       },
       {
+        "title": "Ödeme Hatırlatma",
+        "subtitle":
+            "Öğrencilerin kayıt olma tarihlerine göre ödeme yapılmayan öğrencileri takip edebilirsiniz.",
+        "icon": Icons.notifications_active,
+        "color": Colors.red,
+        "route": "payment_reminder",
+      },
+      {
         "title": "Öğrenci Aktif/Pasif",
         "subtitle":
             "Devam eden/etmeyen öğrencileri ayırabilir ve görüntüleyebilirsiniz.",
         "icon": Icons.person_add_disabled,
         "color": Colors.deepOrange,
         "route": "pasifaktif",
+      },
+      {
+        "title": "Günlük Ödeme\nTakibi", // 🔥 DEĞİŞTİRİLDİ
+        "subtitle":
+            "Günlük tahsilatları ve ödeme yapan öğrencileri görüntüleyin.",
+        "icon": Icons.bar_chart,
+        "color": Colors.indigo,
+        "route": "daily_payment",
+      },
+      {
+        "title": "Devamsızlık\nTakibi",
+        "subtitle": "Öğrencilerin devamsızlık durumlarını görüntüleyin",
+        "icon": Icons.warning_amber,
+        "color": Colors.deepOrange,
+        "route": "attendance_detail",
       },
     ];
 
@@ -1132,11 +1160,22 @@ class _AdminDashboardState extends State<AdminDashboard> {
           context,
           MaterialPageRoute(builder: (_) => GroupManagementScreen()),
         );
+      // AdminDashboard içindeki _buildMenuGrid metoduna ekle:
 
+      // _navigateToRoute metoduna ekle:
+      case "attendance_detail":
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const StudentAttendanceDetailScreen(),
+          ),
+        );
         break;
-      case "reports":
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Raporlar özelliği yakında...")),
+
+      case "daily_payment":
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const DailyPaymentTracker()),
         );
         break;
       case "pasifaktif":

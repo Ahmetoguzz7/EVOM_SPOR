@@ -1,661 +1,349 @@
-/*
-import 'package:connectivity_plus/connectivity_plus.dart';
+// lib/core/offline_sync_manager.dart
+import 'dart:async';
+import 'package:EVOM_SPOR/core/app_repository.dart';
+import 'package:EVOM_SPOR/local/local_storage_service.dart';
+import 'package:EVOM_SPOR/datapage/data_page/data.dart';
+import 'package:EVOM_SPOR/datapage/fetch_data_page.dart';
+import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'package:EVOM_SPORrena/datapage/fetch_data_page.dart';
-import 'package:EVOM_SPOR/local/local_db.dart';
 
-class OfflineSyncService {
-  static final OfflineSyncService _instance = OfflineSyncService._internal();
-  factory OfflineSyncService() => _instance;
-  OfflineSyncService._internal();
+/// 🚀 OFFLINE-FIRST SENKRONİZASYON YÖNETİCİSİ
+class OfflineSyncManager {
+  static final OfflineSyncManager _instance = OfflineSyncManager._internal();
+  factory OfflineSyncManager() => _instance;
+  OfflineSyncManager._internal();
 
-  final LocalDatabaseService _localDB = LocalDatabaseService();
+  late final LocalStorageService _localStorage;
+  late final AppRepository _repository;
+
+  Timer? _syncTimer;
   bool _isSyncing = false;
 
-  // =========================================================================
-  // VERİ ÇEKME (ÖNCE LOCAL, SONRA API)
-  // =========================================================================
+  final List<QueuedOperation> _operationQueue = [];
 
-  Future<List<T>> getData<T>({
-    required String tableName,
-    required String apiEndpoint,
-    required T Function(Map<String, dynamic>) fromJson,
-    Duration cacheDuration = const Duration(minutes: 5),
-    bool forceRefresh = false,
-  }) async {
-    // Force refresh varsa local'i temizle
-    if (forceRefresh) {
-      await _localDB.clearTable(tableName);
-    }
+  final StreamController<void> _dataChangeController =
+      StreamController.broadcast();
+  Stream<void> get onDataChanged => _dataChangeController.stream;
 
-    // 1. ÖNCE LOCAL'DEN AL
-    final localData = await _localDB.getAll(tableName);
+  Future<void> init(AppRepository repository) async {
+    _repository = repository;
+    _localStorage = LocalStorageService();
+    await _localStorage.init();
 
-    // Cache süresi kontrolü
-    if (!forceRefresh && localData.isNotEmpty) {
-      print("📦 LOCAL'DEN GETİRİLDİ: $tableName (${localData.length} kayıt)");
-      return localData.map((item) => fromJson(item)).toList();
-    }
+    _syncTimer = Timer.periodic(const Duration(minutes: 5), (_) => syncNow());
 
-    // 2. LOCAL BOŞSA VEYA SÜRESİ GEÇTİYSE API'DEN ÇEK
-    print("🌐 API'DEN ÇEKİLİYOR: $tableName");
-
-    final networkData = await _fetchFromApi(apiEndpoint);
-
-    // 3. LOCAL'E KAYDET
-    for (var item in networkData) {
-      final id = _getIdFromItem(tableName, item);
-      await _localDB.insertOrUpdate(tableName, id, item);
-    }
-
-    await _localDB.addSyncLog(tableName, "success", networkData.length);
-
-    return networkData.map((item) => fromJson(item)).toList();
+    print("✅ OfflineSyncManager başlatıldı");
   }
 
-  String _getIdFromItem(String tableName, Map<String, dynamic> item) {
-    switch (tableName) {
-      case 'users':
-        return item['app']?.toString() ?? '';
-      case 'groups':
-        return item['groups_id']?.toString() ?? '';
-      case 'payments':
-        return item['payments_id']?.toString() ?? '';
-      case 'attendances':
-        return item['attendances_id']?.toString() ?? '';
-      case 'notifications':
-        return item['notifications_id']?.toString() ?? '';
-      case 'coaches':
-        return item['coach_id']?.toString() ?? '';
-      case 'branches':
-        return item['branches_id']?.toString() ?? '';
-      case 'sports':
-        return item['sports_id']?.toString() ?? '';
-      default:
-        return DateTime.now().millisecondsSinceEpoch.toString();
-    }
+  // ============================================================
+  // ✍️ VERİ YAZMA - ÖNCE LOKAL, SONRA ARKA PLANDA SYNC
+  // ============================================================
+
+  Future<Users> addStudent(Users student) async {
+    final updatedList = [..._localStorage.getUsers(), student];
+    await _localStorage.saveUsers(updatedList);
+
+    _repository.updateAllData(
+      users: updatedList,
+      groups: _repository.allGroups,
+      groupStudents: _repository.allGroupStudents,
+      payments: _repository.allPayments,
+      attendances: _repository.allAttendances,
+      coaches: _repository.allCoaches,
+      notifications: _repository.allNotifications,
+    );
+
+    _dataChangeController.add(null);
+
+    _operationQueue.add(
+      QueuedOperation(
+        type: OperationType.addStudent,
+        data: student.toJson(),
+        timestamp: DateTime.now(),
+      ),
+    );
+
+    unawaited(_processQueue());
+    return student;
   }
 
-  Future<List<dynamic>> _fetchFromApi(String apiEndpoint) async {
-    return await GoogleSheetService.fetchTable(apiEndpoint);
-  }
+  Future<void> updateStudent(Users student) async {
+    final users = _localStorage.getUsers();
+    final index = users.indexWhere((u) => u.app == student.app);
+    if (index != -1) {
+      users[index] = student;
+      await _localStorage.saveUsers(users);
 
-  // =========================================================================
-  // VERİ KAYDETME (PENDING QUEUE)
-  // =========================================================================
-
-  Future<bool> saveData({
-    required String tableName,
-    required Map<String, dynamic> data,
-    required Future<bool> Function(Map<String, dynamic>) apiSaveFunction,
-  }) async {
-    final connectivity = await Connectivity().checkConnectivity();
-
-    // ÖNCE LOCAL'E KAYDET
-    final tempId =
-        data['${tableName}_id'] ??
-        'temp_${DateTime.now().millisecondsSinceEpoch}';
-    await _localDB.insertOrUpdate(tableName, tempId.toString(), data);
-
-    if (connectivity != ConnectivityResult.none) {
-      // İNTERNET VAR: HEMEN API'YE GÖNDER
-      final success = await apiSaveFunction(data);
-      if (success) {
-        print("✅ API'ye gönderildi: $tableName");
-        return true;
-      } else {
-        // API HATASI: PENDING QUEUE'YE EKLE
-        await _localDB.addPendingOperation(
-          operation: 'insert',
-          tableName: tableName,
-          data: data,
-        );
-        print("⚠️ API hatası, pending queue'ye eklendi: $tableName");
-        return true;
-      }
-    } else {
-      // İNTERNET YOK: PENDING QUEUE'YE EKLE
-      await _localDB.addPendingOperation(
-        operation: 'insert',
-        tableName: tableName,
-        data: data,
+      _repository.updateAllData(
+        users: users,
+        groups: _repository.allGroups,
+        groupStudents: _repository.allGroupStudents,
+        payments: _repository.allPayments,
+        attendances: _repository.allAttendances,
+        coaches: _repository.allCoaches,
+        notifications: _repository.allNotifications,
       );
-      print("📱 İnternet yok, pending queue'ye eklendi: $tableName");
-      return true;
+
+      _dataChangeController.add(null);
+
+      _operationQueue.add(
+        QueuedOperation(
+          type: OperationType.updateStudent,
+          data: student.toJson(),
+          timestamp: DateTime.now(),
+        ),
+      );
+
+      unawaited(_processQueue());
     }
   }
 
-  // =========================================================================
-  // SENKRONİZASYON
-  // =========================================================================
+  Future<void> deleteStudent(String studentId) async {
+    final users = _localStorage.getUsers();
+    final updated = users.where((u) => u.app != studentId).toList();
+    await _localStorage.saveUsers(updated);
 
-  Future<void> syncPendingOperations() async {
+    _repository.updateAllData(
+      users: updated,
+      groups: _repository.allGroups,
+      groupStudents: _repository.allGroupStudents,
+      payments: _repository.allPayments,
+      attendances: _repository.allAttendances,
+      coaches: _repository.allCoaches,
+      notifications: _repository.allNotifications,
+    );
+
+    _dataChangeController.add(null);
+
+    _operationQueue.add(
+      QueuedOperation(
+        type: OperationType.deleteStudent,
+        data: {'student_id': studentId},
+        timestamp: DateTime.now(),
+      ),
+    );
+
+    unawaited(_processQueue());
+  }
+
+  Future<Payment> addPayment(Payment payment) async {
+    final payments = [..._localStorage.getPayments(), payment];
+    await _localStorage.savePayments(payments);
+
+    _repository.updateAllData(
+      users: _repository.allUsers,
+      groups: _repository.allGroups,
+      groupStudents: _repository.allGroupStudents,
+      payments: payments,
+      attendances: _repository.allAttendances,
+      coaches: _repository.allCoaches,
+      notifications: _repository.allNotifications,
+    );
+
+    _dataChangeController.add(null);
+
+    _operationQueue.add(
+      QueuedOperation(
+        type: OperationType.addPayment,
+        data: payment.toJson(),
+        timestamp: DateTime.now(),
+      ),
+    );
+
+    unawaited(_processQueue());
+    return payment;
+  }
+
+  Future<Attendance> addAttendance(Attendance attendance) async {
+    final attendances = [..._localStorage.getAttendances(), attendance];
+    await _localStorage.saveAttendances(attendances);
+
+    _repository.updateAllData(
+      users: _repository.allUsers,
+      groups: _repository.allGroups,
+      groupStudents: _repository.allGroupStudents,
+      payments: _repository.allPayments,
+      attendances: attendances,
+      coaches: _repository.allCoaches,
+      notifications: _repository.allNotifications,
+    );
+
+    _dataChangeController.add(null);
+
+    _operationQueue.add(
+      QueuedOperation(
+        type: OperationType.addAttendance,
+        data: attendance.toJson(),
+        timestamp: DateTime.now(),
+      ),
+    );
+
+    unawaited(_processQueue());
+    return attendance;
+  }
+
+  // ============================================================
+  // 🔄 ARKA PLAN SENKRONİZASYONU
+  // ============================================================
+
+  Future<void> syncNow() async {
     if (_isSyncing) return;
     _isSyncing = true;
 
+    print("🔄 Senkronizasyon başladı...");
+
     try {
-      final connectivity = await Connectivity().checkConnectivity();
-      if (connectivity == ConnectivityResult.none) {
-        print("⚠️ İnternet yok, senkronizasyon bekletiliyor");
-        _isSyncing = false;
-        return;
-      }
-
-      final pendingOps = await _localDB.getPendingOperations();
-      print("🔄 Senkronize edilecek: ${pendingOps.length} işlem");
-
-      int successCount = 0;
-      int failCount = 0;
-
-      for (var op in pendingOps) {
-        final data = jsonDecode(op['data'] as String);
-        final success = await _executeOperation(
-          op['operation'] as String,
-          op['table_name'] as String,
-          data,
-        );
-
-        if (success) {
-          await _localDB.removePendingOperation(op['id'] as int);
-          successCount++;
-          print("✅ Senkronize edildi: ${op['table_name']}");
-        } else {
-          await _localDB.updatePendingRetryCount(op['id'] as int);
-
-          final retryCount = (op['retry_count'] as int?) ?? 0;
-          if (retryCount + 1 >= 3) {
-            await _localDB.removePendingOperation(op['id'] as int);
-            print(
-              "❌ 3 deneme başarısız, işlem iptal edildi: ${op['table_name']}",
-            );
-          } else {
-            failCount++;
-            print(
-              "❌ Senkronizasyon başarısız, tekrar denenicek: ${op['table_name']}",
-            );
-          }
-        }
-      }
-
-      await _localDB.addSyncLog("pending_operations", "success", successCount);
-      print(
-        "🔄 Senkronizasyon tamamlandı: $successCount başarılı, $failCount başarısız",
-      );
+      await _processQueue();
+      await _pullFromGoogle();
+      print("✅ Senkronizasyon tamamlandı!");
     } catch (e) {
-      print("Senkronizasyon hatası: $e");
-      await _localDB.addSyncLog("pending_operations", "error", 0);
+      print("❌ Senkronizasyon hatası: $e");
     } finally {
       _isSyncing = false;
     }
   }
 
-  Future<bool> _executeOperation(
-    String operation,
-    String tableName,
-    Map<String, dynamic> data,
-  ) async {
-    switch (operation) {
-      case 'insert':
-        return await GoogleSheetService.insertData(tableName, data);
-      case 'update':
-        return await GoogleSheetService.updateData(tableName, data);
-      case 'delete':
-        return await GoogleSheetService.deleteData(tableName, data);
-      default:
-        return false;
-    }
-  }
+  Future<void> _processQueue() async {
+    if (_operationQueue.isEmpty) return;
 
-  // =========================================================================
-  // PERİYODİK SENKRONİZASYON
-  // =========================================================================
+    print("📤 ${_operationQueue.length} işlem senkronize ediliyor...");
 
-  void startPeriodicSync({Duration interval = const Duration(minutes: 5)}) {
-    Future.delayed(Duration.zero, () async {
-      while (true) {
-        await Future.delayed(interval);
-        await syncPendingOperations();
+    final List<QueuedOperation> succeeded = [];
+    final List<QueuedOperation> failed = [];
+
+    for (final op in _operationQueue) {
+      try {
+        final success = await _executeOperation(op);
+        if (success) {
+          succeeded.add(op);
+          print("  ✅ ${op.type} başarılı");
+        } else {
+          failed.add(op);
+          print("  ❌ ${op.type} başarısız");
+        }
+      } catch (e) {
+        failed.add(op);
+        print("  ❌ ${op.type} hata: $e");
       }
-    });
-  }
-
-  // =========================================================================
-  // ZORUNLU SENKRONİZASYON
-  // =========================================================================
-
-  Future<void> forceSync() async {
-    print("🔄 Zorunlu senkronizasyon başlatılıyor...");
-    await syncPendingOperations();
-  }
-
-  Future<void> refreshAllData() async {
-    print("🔄 Tüm veriler yenileniyor...");
-    final tables = [
-      'users',
-      'groups',
-      'payments',
-      'attendances',
-      'notifications',
-      'coaches',
-      'branches',
-      'sports',
-    ];
-
-    for (var table in tables) {
-      await _localDB.clearTable(table);
-      await _fetchFromApi(table);
     }
 
-    print("✅ Tüm veriler yenilendi!");
+    _operationQueue.removeWhere((op) => succeeded.contains(op));
+
+    if (_operationQueue.isNotEmpty) {
+      print("⚠️ ${_operationQueue.length} işlem bekliyor (internet yok)");
+    }
   }
 
-  // =========================================================================
-  // DURUM KONTROLÜ
-  // =========================================================================
+  Future<bool> _executeOperation(QueuedOperation op) async {
+    final url = Uri.parse(
+      "https://script.google.com/macros/s/AKfycby3EW0jopQmtAZf-v_TVW8oNUS7BANs6EuMgAi4bisyz07gtlWqAQtPFIF6eIIf_cTXRg/exec",
+    );
 
-  Future<bool> hasPendingOperations() async {
-    final pending = await _localDB.getPendingOperations();
-    return pending.isNotEmpty;
-  }
-
-  Future<int> getPendingOperationCount() async {
-    final pending = await _localDB.getPendingOperations();
-    return pending.length;
-  }
-
-  Future<Map<String, int>> getLocalDataStats() async {
-    return await _localDB.getAllTableCounts();
-  }
-  // offline_sync_service.dart içine ekle:
-
-  // SADECE LOCAL'DEN OKU - ASLA API'YE GİTMEZ! ⚡
-  Future<List<T>> getLocalDataOnly<T>({
-    required String tableName,
-    required T Function(Map<String, dynamic>) fromJson,
-  }) async {
-    final localData = await _localDB.getAll(tableName);
-    print("📦 LOCAL'DEN OKUNDU: $tableName (${localData.length} kayıt)");
-    return localData.map((item) => fromJson(item['data'])).toList();
-  }
-
-  // BACKGROUND SYNC - UI'ı kitllemez
-  Future<void> syncTableInBackground({
-    required String tableName,
-    required String apiEndpoint,
-  }) async {
     try {
-      print("🌐 BACKGROUND SYNC: $tableName");
-      final networkData = await _fetchFromApi(apiEndpoint);
+      final response = await http
+          .post(
+            url,
+            body: {
+              'action': _getActionForOperation(op.type),
+              'data': jsonEncode(op.data),
+              'timestamp': op.timestamp.toIso8601String(),
+            },
+          )
+          .timeout(const Duration(seconds: 10));
 
-      for (var item in networkData) {
-        final id = _getIdFromItem(tableName, item);
-        await _localDB.insertOrUpdate(tableName, id, item);
-      }
-
-      await _localDB.addSyncLog(tableName, "success", networkData.length);
-      print("✅ BACKGROUND SYNC TAMAMLANDI: $tableName");
+      return response.statusCode == 200;
     } catch (e) {
-      print("❌ BACKGROUND SYNC HATASI: $tableName - $e");
+      return false;
     }
   }
 
-  // TÜM TABLOLARI SYNC ET
-  Future<void> syncAllTablesInBackground() async {
-    print("🔄 TÜM TABLOLAR SYNC BAŞLADI");
-
-    final tables = {
-      'users': 'users',
-      'groups': 'groups',
-      'payments': 'payments',
-      'attendances': 'attendances',
-      'notifications': 'notifications',
-      'coaches': 'coaches',
-      'branches': 'branches',
-      'sports': 'sports',
-    };
-
-    for (var entry in tables.entries) {
-      await syncTableInBackground(
-        tableName: entry.key,
-        apiEndpoint: entry.value,
-      );
-      await Future.delayed(Duration(milliseconds: 500)); // Rate limiting
+  String _getActionForOperation(OperationType type) {
+    switch (type) {
+      case OperationType.addStudent:
+        return 'addStudent';
+      case OperationType.updateStudent:
+        return 'updateStudent';
+      case OperationType.deleteStudent:
+        return 'deleteStudent';
+      case OperationType.addPayment:
+        return 'addPayment';
+      case OperationType.addAttendance:
+        return 'addAttendance';
     }
+  }
 
-    print("✅ TÜM TABLOLAR SYNC TAMAMLANDI");
+  Future<void> _pullFromGoogle() async {
+    print("📥 Google'dan güncel veriler çekiliyor...");
+
+    final results = await Future.wait([
+      GoogleSheetService.getUsersCached(forceRefresh: true),
+      GoogleSheetService.getGroupsCached(forceRefresh: true),
+      GoogleSheetService.getGroupStudentsCached(forceRefresh: true),
+      GoogleSheetService.getPaymentsCached(forceRefresh: true),
+      GoogleSheetService.getAttendancesCached(forceRefresh: true),
+      GoogleSheetService.getCoachesCached(forceRefresh: true),
+      GoogleSheetService.getNotifications(userId: "all", forceRefresh: true),
+    ]);
+
+    final users = results[0] as List<Users>;
+    final groups = results[1] as List<Group>;
+    final groupStudents = results[2] as List<GroupStudent>;
+    final payments = results[3] as List<Payment>;
+    final attendances = results[4] as List<Attendance>;
+    final coaches = results[5] as List<Coach>;
+    final notifications = results[6] as List<Notifications>;
+
+    await _localStorage.saveAllData(
+      users: users,
+      groups: groups,
+      groupStudents: groupStudents,
+      payments: payments,
+      attendances: attendances,
+      coaches: coaches,
+      notifications: notifications,
+    );
+
+    await _localStorage.setLastSyncTime(DateTime.now());
+
+    _repository.updateAllData(
+      users: users,
+      groups: groups,
+      groupStudents: groupStudents,
+      payments: payments,
+      attendances: attendances,
+      coaches: coaches,
+      notifications: notifications,
+    );
+
+    _dataChangeController.add(null);
+
+    print(
+      "✅ Google verileri lokal cache'e kaydedildi: ${users.length} kullanıcı",
+    );
+  }
+
+  void dispose() {
+    _syncTimer?.cancel();
+    _dataChangeController.close();
   }
 }
-*/
-// offline_sync_service.dart (GÜNCELLENMİŞ VERSİYON)
 
-import 'package:EVOM_SPOR/local/local_db.dart';
-import 'package:EVOM_SPOR/datapage/fetch_data_page.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
-import 'dart:convert';
+enum OperationType {
+  addStudent,
+  updateStudent,
+  deleteStudent,
+  addPayment,
+  addAttendance,
+}
 
-class OfflineSyncService {
-  static final OfflineSyncService _instance = OfflineSyncService._internal();
-  factory OfflineSyncService() => _instance;
-  OfflineSyncService._internal();
+class QueuedOperation {
+  final OperationType type;
+  final Map<String, dynamic> data;
+  final DateTime timestamp;
 
-  final LocalDatabaseService _localDB = LocalDatabaseService();
-  bool _isSyncing = false;
-
-  // =========================================================================
-  // 🚀 ANA METOD: ÖNCE LOCAL'DEN OKU, SONRA BACKGROUND SYNC
-  // =========================================================================
-
-  Future<List<T>> getData<T>({
-    required String tableName,
-    required T Function(Map<String, dynamic>) fromJson,
-    bool forceRefresh = false,
-  }) async {
-    // 1. FORCE REFRESH varsa local'i temizle
-    if (forceRefresh) {
-      await _localDB.clearTable(tableName);
-    }
-
-    // 2. ÖNCE LOCAL'DEN OKU (ÇOK HIZLI ⚡)
-    final localData = await _localDB.getAll(tableName);
-
-    if (localData.isNotEmpty && !forceRefresh) {
-      print("📦 LOCAL'DEN OKUNDU: $tableName (${localData.length} kayıt)");
-
-      // Arkada background'da güncelle (kullanıcı beklemez)
-      _syncTableInBackground(tableName);
-
-      return localData.map((item) => fromJson(item['data'])).toList();
-    }
-
-    // 3. LOCAL BOŞSA veya FORCE REFRESH varsa API'den çek
-    print("🌐 API'DEN ÇEKİLİYOR: $tableName");
-
-    List<dynamic> networkData;
-    try {
-      // GoogleSheetService'in mevcut cache'li metodunu kullan
-      networkData = await GoogleSheetService.fetchTableCached(
-        tableName,
-        forceRefresh: true,
-      );
-    } catch (e) {
-      // API hatası, local'de ne varsa onu döndür
-      if (localData.isNotEmpty) {
-        print("⚠️ API hatası, local veri döndürülüyor");
-        return localData.map((item) => fromJson(item['data'])).toList();
-      }
-      rethrow;
-    }
-
-    // 4. Local'e kaydet
-    for (var item in networkData) {
-      final id = _getIdFromItem(tableName, item);
-      await _localDB.insertOrUpdate(tableName, id, item);
-    }
-
-    await _localDB.addSyncLog(tableName, "success", networkData.length);
-
-    return networkData.map((item) => fromJson(item)).toList();
-  }
-
-  // Background sync (UI blocklamaz)
-  Future<void> _syncTableInBackground(String tableName) async {
-    Future.microtask(() async {
-      try {
-        final networkData = await GoogleSheetService.fetchTableCached(
-          tableName,
-          forceRefresh: true,
-        );
-
-        for (var item in networkData) {
-          final id = _getIdFromItem(tableName, item);
-          await _localDB.insertOrUpdate(tableName, id, item);
-        }
-
-        print("🔄 BACKGROUND SYNC: $tableName (${networkData.length} kayıt)");
-      } catch (e) {
-        print("⚠️ Background sync hatası: $tableName - $e");
-      }
-    });
-  }
-
-  // Tüm tabloları background'da sync et
-  Future<void> syncAllTablesInBackground() async {
-    final tables = [
-      'users',
-      'groups',
-      'payments',
-      'attendances',
-      'notifications',
-      'coaches',
-      'branches',
-      'sports',
-    ];
-
-    for (var table in tables) {
-      await _syncTableInBackground(table);
-      await Future.delayed(Duration(milliseconds: 200));
-    }
-  }
-
-  String _getIdFromItem(String tableName, Map<String, dynamic> item) {
-    switch (tableName) {
-      case 'users':
-        return item['app']?.toString() ?? '';
-      case 'groups':
-        return item['groups_id']?.toString() ?? '';
-      case 'payments':
-        return item['payments_id']?.toString() ?? '';
-      case 'attendances':
-        return item['attendances_id']?.toString() ?? '';
-      case 'notifications':
-        return item['notifications_id']?.toString() ?? '';
-      case 'coaches':
-        return item['coach_id']?.toString() ?? '';
-      case 'branches':
-        return item['branches_id']?.toString() ?? '';
-      case 'sports':
-        return item['sports_id']?.toString() ?? '';
-      default:
-        return DateTime.now().millisecondsSinceEpoch.toString();
-    }
-  }
-
-  // Pending operation'ları sync et
-  Future<void> syncPendingOperations() async {
-    if (_isSyncing) return;
-    _isSyncing = true;
-
-    try {
-      final connectivity = await Connectivity().checkConnectivity();
-      if (connectivity == ConnectivityResult.none) {
-        print("⚠️ İnternet yok, sync bekletiliyor");
-        return;
-      }
-
-      final pendingOps = await _localDB.getPendingOperations();
-      print("🔄 Sync edilecek: ${pendingOps.length} işlem");
-
-      for (var op in pendingOps) {
-        final data = jsonDecode(op['data'] as String);
-        bool success = false;
-
-        switch (op['operation'] as String) {
-          case 'insert':
-            success = await GoogleSheetService.insertData(
-              op['table_name'] as String,
-              data,
-            );
-            break;
-          case 'update':
-            success = await GoogleSheetService.updateData(
-              op['table_name'] as String,
-              data,
-              data, // updateData parametresi eklenmeli
-            );
-            break;
-          case 'delete':
-            success = await GoogleSheetService.deleteData(
-              op['table_name'] as String,
-              data,
-            );
-            break;
-        }
-
-        if (success) {
-          await _localDB.removePendingOperation(op['id'] as int);
-          print("✅ Sync edildi: ${op['table_name']}");
-        } else {
-          await _localDB.updatePendingRetryCount(op['id'] as int);
-          final retryCount = (op['retry_count'] as int?) ?? 0;
-          if (retryCount + 1 >= 3) {
-            await _localDB.removePendingOperation(op['id'] as int);
-            print("❌ 3 deneme başarısız, işlem iptal edildi");
-          }
-        }
-      }
-    } finally {
-      _isSyncing = false;
-    }
-  }
-
-  void startPeriodicSync({Duration interval = const Duration(minutes: 30)}) {
-    Future.delayed(Duration.zero, () async {
-      while (true) {
-        await Future.delayed(interval);
-        await syncPendingOperations();
-        await syncAllTablesInBackground();
-      }
-    });
-  }
-
-  Future<Map<String, int>> getLocalDataStats() async {
-    return await _localDB.getAllTableCounts();
-  }
-  // offline_sync_service.dart - BU METODLARI EKLE
-
-  // =========================================================================
-  // 📝 VERİ KAYDETME (OFFLINE-FIRST)
-  // =========================================================================
-
-  Future<bool> saveData({
-    required String tableName,
-    required Map<String, dynamic> data,
-    required Future<bool> Function(Map<String, dynamic>) apiSaveFunction,
-  }) async {
-    final connectivity = await Connectivity().checkConnectivity();
-
-    // 1. ÖNCE LOCAL'E KAYDET
-    final tempId =
-        data['${tableName}_id']?.toString() ??
-        'temp_${DateTime.now().millisecondsSinceEpoch}';
-    await _localDB.insertOrUpdate(tableName, tempId, data);
-
-    print("💾 Local'e kaydedildi: $tableName");
-
-    // 2. İNTERNET VARSA HEMEN API'YE GÖNDER
-    if (connectivity != ConnectivityResult.none) {
-      try {
-        final success = await apiSaveFunction(data);
-        if (success) {
-          // API başarılı, local'deki veriyi güncelle (ID varsa)
-          print("✅ API'ye gönderildi: $tableName");
-          return true;
-        } else {
-          // API hatası, pending queue'ye ekle
-          await _localDB.addPendingOperation(
-            operation: 'insert',
-            tableName: tableName,
-            data: data,
-          );
-          print("⚠️ API hatası, pending queue'ye eklendi: $tableName");
-          return true; // Local'e kaydettiğimiz için true döndür
-        }
-      } catch (e) {
-        // API'ye gönderilemedi, pending queue'ye ekle
-        await _localDB.addPendingOperation(
-          operation: 'insert',
-          tableName: tableName,
-          data: data,
-        );
-        print("⚠️ API hatası ($e), pending queue'ye eklendi: $tableName");
-        return true;
-      }
-    } else {
-      // 3. İNTERNET YOKSA PENDING QUEUE'YE EKLE
-      await _localDB.addPendingOperation(
-        operation: 'insert',
-        tableName: tableName,
-        data: data,
-      );
-      print("📱 İnternet yok, pending queue'ye eklendi: $tableName");
-      return true;
-    }
-  }
-
-  // UPDATE için (varsa)
-  Future<bool> updateData({
-    required String tableName,
-    required String id,
-    required Map<String, dynamic> data,
-    required Future<bool> Function(Map<String, dynamic>) apiUpdateFunction,
-  }) async {
-    final connectivity = await Connectivity().checkConnectivity();
-
-    // 1. Local'i güncelle
-    await _localDB.insertOrUpdate(tableName, id, data);
-
-    // 2. İnternet varsa API'ye gönder
-    if (connectivity != ConnectivityResult.none) {
-      final success = await apiUpdateFunction(data);
-      if (!success) {
-        await _localDB.addPendingOperation(
-          operation: 'update',
-          tableName: tableName,
-          data: {...data, '_id': id},
-        );
-      }
-      return success;
-    } else {
-      // İnternet yoksa pending queue'ye ekle
-      await _localDB.addPendingOperation(
-        operation: 'update',
-        tableName: tableName,
-        data: {...data, '_id': id},
-      );
-      return true;
-    }
-  }
-
-  // DELETE için (varsa)
-  Future<bool> deleteData({
-    required String tableName,
-    required String id,
-    required Future<bool> Function(String) apiDeleteFunction,
-  }) async {
-    final connectivity = await Connectivity().checkConnectivity();
-
-    // 1. Local'den sil
-    await _localDB.deleteById(tableName, id);
-
-    // 2. İnternet varsa API'ye gönder
-    if (connectivity != ConnectivityResult.none) {
-      final success = await apiDeleteFunction(id);
-      if (!success) {
-        await _localDB.addPendingOperation(
-          operation: 'delete',
-          tableName: tableName,
-          data: {'id': id},
-        );
-      }
-      return success;
-    } else {
-      // İnternet yoksa pending queue'ye ekle
-      await _localDB.addPendingOperation(
-        operation: 'delete',
-        tableName: tableName,
-        data: {'id': id},
-      );
-      return true;
-    }
-  }
+  QueuedOperation({
+    required this.type,
+    required this.data,
+    required this.timestamp,
+  });
 }

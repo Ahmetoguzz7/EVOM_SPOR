@@ -87,7 +87,9 @@ class _CoachLoadingScreenState extends State<CoachLoadingScreen>
 
       final coaches = _repo.allCoaches;
       final sports = _repo.allSports;
-      final coachData = coaches.firstWhere(
+
+      // 1. Önce kullanıcının kendi coach kaydını bul
+      var userCoach = coaches.firstWhere(
         (c) => c.user_id == widget.user.app,
         orElse: () => Coach(
           coach_id: "",
@@ -98,11 +100,56 @@ class _CoachLoadingScreenState extends State<CoachLoadingScreen>
           certificate_info: "",
           monthly_salary: "",
           hired_at: "",
+          supervisor_coach_id: "",
         ),
       );
-      final sportData = coachData.sports_id.isNotEmpty
+
+      Coach targetCoach = userCoach;
+
+      // 🔥🔥🔥 EĞER YARDIMCI ANTRENÖRSE, BAĞLI OLDUĞU HOCAYI BUL 🔥🔥🔥
+      if (widget.user.role.toLowerCase() == 'assistant_coach' ||
+          widget.user.role.toLowerCase() == 'yardımcı_antrenör') {
+        // Tüm coach'ları tara, supervisor_coach_id içinde bu user_id var mı?
+        Coach? masterCoach;
+        for (var coach in coaches) {
+          if (coach.supervisor_coach_id.isNotEmpty) {
+            List<String> supervisorIds = [];
+            if (coach.supervisor_coach_id.contains(',')) {
+              supervisorIds = coach.supervisor_coach_id
+                  .split(',')
+                  .map((s) => s.trim())
+                  .toList();
+            } else if (coach.supervisor_coach_id.contains('.')) {
+              supervisorIds = coach.supervisor_coach_id
+                  .split('.')
+                  .map((s) => s.trim())
+                  .toList();
+            } else {
+              supervisorIds = [coach.supervisor_coach_id.trim()];
+            }
+
+            if (supervisorIds.contains(widget.user.app)) {
+              masterCoach = coach;
+              print(
+                "✅ Yardımcı antrenör! Üst hoca bulundu: coach_id=${masterCoach.coach_id}, user_id=${masterCoach.user_id}",
+              );
+              break;
+            }
+          }
+        }
+
+        if (masterCoach != null) {
+          targetCoach = masterCoach;
+        } else {
+          print("⚠️ Üst hoca bulunamadı, kendi coach kaydı kullanılacak");
+          targetCoach = userCoach;
+        }
+      }
+
+      // 2. Spor bilgisini bul
+      final sportData = targetCoach.sports_id.isNotEmpty
           ? sports.firstWhere(
-              (s) => s.sports_id == coachData.sports_id,
+              (s) => s.sports_id == targetCoach.sports_id,
               orElse: () =>
                   Sports(sports_id: "", name: "Spor", description: ""),
             )
@@ -120,7 +167,7 @@ class _CoachLoadingScreenState extends State<CoachLoadingScreen>
             builder: (_) => PersonalTrainer(
               users: widget.user,
               sport: sportData,
-              coachData: coachData,
+              coachData: targetCoach, // 🔥 ARTIK DOĞRU HOCA (Celal)
             ),
           ),
         );

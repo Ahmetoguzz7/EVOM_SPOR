@@ -1,3 +1,5 @@
+// lib/managerpage/manager_notifications.dart
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:EVOM_SPOR/datapage/data_page/data.dart';
@@ -5,6 +7,7 @@ import 'package:EVOM_SPOR/datapage/fetch_data_page.dart';
 import 'package:EVOM_SPOR/managerpage/manager_interface.dart';
 import 'dart:core';
 import 'package:intl/intl.dart';
+import 'package:EVOM_SPOR/core/app_repository.dart'; // 🔥 RAM HAFIZA ODASI ENTEGRASYONU
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
@@ -20,6 +23,10 @@ class NotificationsScreen extends StatefulWidget {
 
 class _NotificationsScreenState extends State<NotificationsScreen>
     with SingleTickerProviderStateMixin {
+  // 🔥 MİMARİ BAĞLANTI: Sayfa doğrudan yerel RAM'i dinleyecek
+  final AppRepository _repo = AppRepository();
+  StreamSubscription<bool>? _repoSubscription;
+
   late TabController _tabController;
 
   final TextEditingController _titleController = TextEditingController();
@@ -35,16 +42,17 @@ class _NotificationsScreenState extends State<NotificationsScreen>
   List<Group> _allGroups = [];
   List<Users> _allUsers = [];
   List<Users> _filteredUsers = [];
+  List<Notifications> _cachedNotifications = []; // 🔥 Hafızadaki bildirimler
 
   bool _isSending = false;
   bool _sendLocalNotification = true;
+  bool _isLoading = false;
+  Timer? _searchDebounce; // 🔥 Klavye kasmalarını önleyen zamanlayıcı
 
-  // 🔥 BEYAZ TEMA RENKLERİ
   static const Color _bg = Color(0xFFF8FAFC);
   static const Color _surface = Colors.white;
   static const Color _surfaceLight = Color(0xFFF1F5F9);
   static const Color _accent = Color(0xFF0EA5E9);
-  static const Color _accentDark = Color(0xFF0284C7);
   static const Color _textPrimary = Color(0xFF0F172A);
   static const Color _textSecondary = Color(0xFF64748B);
   static const Color _textTertiary = Color(0xFF94A3B8);
@@ -59,7 +67,20 @@ class _NotificationsScreenState extends State<NotificationsScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    _searchUserController.addListener(_onSearchChanged);
+
+    // RAM'deki verileri sıfır gecikmeyle yükle
+    _loadDataFromRAM();
+
+    // 🔥 SESSİZ ARKA PLAN DİNLEYİCİSİ:
+    // Periyodik servis arkada bildirimleri güncellerse, ekran kasmadan listeyi yeniler.
+    _repoSubscription = _repo.onDataUpdated.listen((updated) {
+      if (updated && mounted) {
+        print(
+          "⚡ Bildirim Sayfası: Arka planda veriler tazeledi, liste sessizce güncelleniyor...",
+        );
+        _loadDataFromRAM();
+      }
+    });
   }
 
   @override
@@ -68,102 +89,75 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     _titleController.dispose();
     _messageController.dispose();
     _searchUserController.dispose();
+    _searchDebounce?.cancel();
+    _repoSubscription?.cancel();
     super.dispose();
   }
 
+  /// 🧠 RAM BELLEKTEN VERİ OKUMA (0ms Gecikme - İnternet İstemez)
+  void _loadDataFromRAM() {
+    if (!mounted) return;
+
+    _allGroups = _repo.allGroups;
+    _allUsers = _repo.allUsers.where((u) {
+      final role = u.role.toLowerCase();
+      return role == "student" ||
+          role == "coach" ||
+          role == "accountant" ||
+          role == "admin";
+    }).toList();
+
+    // Giriş yapmış olan kullanıcının bildirimlerini RAM haritasından jilet gibi çekiyoruz
+    final myId = widget.currentUser?.app?.toString() ?? "all";
+    _cachedNotifications = _repo.getNotificationsByRecipient(myId);
+
+    // Tarihe göre yeniden eskiye akıllı sıralama
+    _cachedNotifications.sort((a, b) => b.sent_at.compareTo(a.sent_at));
+
+    setState(() {});
+  }
+
   // =========================================================================
-  // 🔥 TÜRKÇE TARİH FONKSİYONLARI
+  // ⚡ DEBOUNCE ARAMA SİSTEMİ (KLAVYENİN KASMASINI KÖKTEN ÇÖZER)
   // =========================================================================
+  void _onSearchChanged(String query) {
+    if (_searchDebounce?.isActive ?? false) _searchDebounce!.cancel();
 
-  String _formatDateTurkish(String dateString) {
-    try {
-      DateTime date = DateTime.parse(dateString.replaceAll(' ', 'T'));
-      final now = DateTime.now();
-      final diff = now.difference(date);
-
-      // Türkçe format için
-      final formatter = DateFormat('dd MMMM yyyy HH:mm', 'tr_TR');
-
-      if (diff.inDays > 7) {
-        return formatter.format(date);
-      }
-      if (diff.inDays > 0) {
-        return '${diff.inDays} gün önce';
-      }
-      if (diff.inHours > 0) {
-        return '${diff.inHours} saat önce';
-      }
-      if (diff.inMinutes > 0) {
-        return '${diff.inMinutes} dakika önce';
-      }
-      return 'Az önce';
-    } catch (e) {
-      return dateString;
-    }
-  }
-
-  // Kısa tarih formatı (sadece gün/ay/yıl)
-  String _formatDateShortTurkish(String dateString) {
-    try {
-      DateTime date = DateTime.parse(dateString.replaceAll(' ', 'T'));
-      final formatter = DateFormat('dd/MM/yyyy', 'tr_TR');
-      return formatter.format(date);
-    } catch (e) {
-      return dateString;
-    }
-  }
-
-  // Uzun tarih formatı (gün ay yıl saat:dakika)
-  String _formatDateLongTurkish(String dateString) {
-    try {
-      DateTime date = DateTime.parse(dateString.replaceAll(' ', 'T'));
-      final formatter = DateFormat('dd MMMM yyyy HH:mm', 'tr_TR');
-      return formatter.format(date);
-    } catch (e) {
-      return dateString;
-    }
-  }
-
-  void _onSearchChanged() {
-    final query = _searchUserController.text;
     if (_selectedUserId != null && !query.contains("(")) {
-      setState(() => _selectedUserId = null);
+      _selectedUserId = null;
     }
-    if (query.isEmpty) {
-      if (_filteredUsers.isNotEmpty) {
+
+    // Kullanıcı harf yazarken bekler, yazmayı durdurunca 250ms sonra tek bir kez filtreler
+    _searchDebounce = Timer(const Duration(milliseconds: 250), () {
+      if (!mounted) return;
+      if (query.trim().isEmpty) {
         setState(() {
           _filteredUsers = [];
           _searchQuery = "";
         });
+        return;
       }
-      return;
-    }
-    final lowerQuery = query.toLowerCase();
-    final results = _allUsers.where((user) {
-      final fullName = "${user.first_name} ${user.last_name}".toLowerCase();
-      final email = user.email.toLowerCase();
-      final roleText = _getRoleText(user.role).toLowerCase();
-      return fullName.contains(lowerQuery) ||
-          email.contains(lowerQuery) ||
-          roleText.contains(lowerQuery);
-    }).toList();
-    setState(() {
-      _searchQuery = query;
-      _filteredUsers = results;
+
+      final lowerQuery = query.trim().toLowerCase();
+      final tempResults = _allUsers.where((user) {
+        final fullName = "${user.first_name} ${user.last_name}".toLowerCase();
+        return fullName.contains(lowerQuery) || user.phone.contains(lowerQuery);
+      }).toList();
+
+      setState(() {
+        _searchQuery = query;
+        _filteredUsers = tempResults;
+      });
     });
   }
 
   void _selectUser(Users user) {
-    _searchUserController.removeListener(_onSearchChanged);
     setState(() {
       _selectedUserId = user.app;
       _searchUserController.text =
           "${user.first_name} ${user.last_name} (${_getRoleText(user.role)})";
       _filteredUsers = [];
       _searchQuery = "";
-    });
-    Future.delayed(const Duration(milliseconds: 100), () {
-      _searchUserController.addListener(_onSearchChanged);
     });
   }
 
@@ -178,13 +172,13 @@ class _NotificationsScreenState extends State<NotificationsScreen>
 
   String _getRoleText(String role) {
     switch (role.toLowerCase()) {
-      case "student":
+      case 'student':
         return "Öğrenci";
-      case "coach":
+      case 'coach':
         return "Antrenör";
-      case "accountant":
+      case 'accountant':
         return "Muhasebeci";
-      case "admin":
+      case 'admin':
         return "Admin";
       default:
         return role;
@@ -193,13 +187,13 @@ class _NotificationsScreenState extends State<NotificationsScreen>
 
   IconData _getRoleIcon(String role) {
     switch (role.toLowerCase()) {
-      case "student":
+      case 'student':
         return Icons.school;
-      case "coach":
+      case 'coach':
         return Icons.sports;
-      case "accountant":
+      case 'accountant':
         return Icons.calculate;
-      case "admin":
+      case 'admin':
         return Icons.admin_panel_settings;
       default:
         return Icons.person;
@@ -208,55 +202,33 @@ class _NotificationsScreenState extends State<NotificationsScreen>
 
   Color _getRoleColor(String role) {
     switch (role.toLowerCase()) {
-      case "student":
+      case 'student':
         return _success;
-      case "coach":
+      case 'coach':
         return _warning;
-      case "accountant":
+      case 'accountant':
         return _info;
-      case "admin":
+      case 'admin':
         return _purple;
       default:
         return _textSecondary;
     }
   }
 
-  String _getCurrentUserId() {
-    if (widget.currentUser != null) {
-      return widget.currentUser!.app?.toString() ?? "Admin";
-    }
-    return "Admin";
+  void _refreshData() async {
+    setState(() => _isLoading = true);
+    // İnternetten sadece bildirimler tablosunu sessizce indirir, RAM'e yazar
+    await _repo.refreshSingleTable('notifications');
+    _loadDataFromRAM();
+    setState(() => _isLoading = false);
   }
 
-  Future<void> _showLocalNotification(String title, String message) async {
-    const AndroidNotificationDetails androidDetails =
-        AndroidNotificationDetails(
-          'evom_spor_channel',
-          'EVOM SPOR Bildirimleri',
-          channelDescription: 'Spor salonu duyuruları ve bildirimleri',
-          importance: Importance.high,
-          priority: Priority.high,
-          playSound: true,
-          showWhen: true,
-          enableVibration: true,
-        );
-
-    const NotificationDetails notificationDetails = NotificationDetails(
-      android: androidDetails,
-    );
-
-    int id = DateTime.now().millisecondsSinceEpoch.remainder(100000);
-
-    await flutterLocalNotificationsPlugin.show(
-      id: id,
-      title: title,
-      body: message,
-      notificationDetails: notificationDetails,
-    );
-  }
-
+  // =========================================================================
+  // ☁️ SESSİZ BİLDİRİM GÖNDERİMİ (UI ASLA KİLİTLENMEZ)
+  // =========================================================================
   Future<void> _sendNotification() async {
-    if (_titleController.text.isEmpty || _messageController.text.isEmpty) {
+    if (_titleController.text.trim().isEmpty ||
+        _messageController.text.trim().isEmpty) {
       _showSnackBar("Başlık ve mesaj boş olamaz!", isError: true);
       return;
     }
@@ -264,58 +236,54 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     setState(() => _isSending = true);
 
     String dbType = _convertTypeToEnglish(_selectedType);
-    String recipientId = "";
-    String groupsId = "";
+    String recipientId = _selectedTargetType == "Tümü"
+        ? "all"
+        : (_selectedTargetType == "Grup" ? "group" : (_selectedUserId ?? ""));
+    String groupsId = _selectedTargetType == "Grup"
+        ? (_selectedGroupId ?? "")
+        : "";
+    String currentUserId = widget.currentUser?.app?.toString() ?? "Admin";
 
-    // 🔥 HEDEF YAPISI
-    if (_selectedTargetType == "Tümü") {
-      recipientId = "all";
-      groupsId = "";
-    } else if (_selectedTargetType == "Grup" && _selectedGroupId != null) {
-      recipientId = "group";
-      groupsId = _selectedGroupId!;
-    } else if (_selectedTargetType == "Kullanıcı" && _selectedUserId != null) {
-      recipientId = _selectedUserId!;
-      groupsId = "";
-    }
-
-    if (recipientId.isEmpty) {
-      _showSnackBar("Lütfen bir hedef seçin!", isError: true);
-      setState(() => _isSending = false);
-      return;
-    }
-
-    final currentUserId = _getCurrentUserId();
-
-    // 🔥🔥🔥 KENDİNE BİLDİRİM GÖNDERMEYİ ENGELLE 🔥🔥🔥
-    if (recipientId == currentUserId) {
+    if (recipientId == currentUserId ||
+        (_selectedTargetType == "Kullanıcı" &&
+            _selectedUserId == currentUserId)) {
       _showSnackBar("❌ Kendinize bildirim gönderemezsiniz!", isError: true);
       setState(() => _isSending = false);
       return;
     }
 
-    // Eğer "Kullanıcı" seçiliyse ve seçilen kullanıcı kendisiyse tekrar kontrol
-    if (_selectedTargetType == "Kullanıcı" &&
-        _selectedUserId == currentUserId) {
-      _showSnackBar("❌ Kendinize bildirim gönderemezsiniz!", isError: true);
-      setState(() => _isSending = false);
-      return;
-    }
+    final localNotifId = "local_ntf_${DateTime.now().millisecondsSinceEpoch}";
+    final newNotif = Notifications(
+      notifications_id: localNotifId,
+      sender_id: currentUserId,
+      recipient_id: recipientId,
+      groups_id: groupsId,
+      title: _titleController.text.trim(),
+      message: _messageController.text.trim(),
+      type: dbType,
+      is_read: "FALSE",
+      sent_at: DateTime.now().toIso8601String(),
+    );
 
-    final notifData = {
-      "notifications_id": "NTF-${DateTime.now().millisecondsSinceEpoch}",
+    // ⚡ Local-First: Önce yerel RAM'e basıyoruz, UI'da anında görünür!
+    _repo.allNotifications.add(newNotif);
+    _loadDataFromRAM();
+
+    // Form paketini hazırla
+    final notifMap = {
+      "notifications_id": localNotifId,
       "sender_id": currentUserId,
       "recipient_id": recipientId,
       "groups_id": groupsId,
-      "title": _titleController.text,
-      "message": _messageController.text,
+      "title": _titleController.text.trim(),
+      "message": _messageController.text.trim(),
       "type": dbType,
       "is_read": "FALSE",
-      "sent_at": DateTime.now().toIso8601String(),
+      "sent_at": newNotif.sent_at,
     };
 
-    // SADECE VERİTABANINA KAYDET, TELEFONA BİLDİRİM GÖNDERME
-    bool dbSuccess = await GoogleSheetService.addNotification(notifData);
+    // Arkada sessizce Google Sheets'e fırlatır, arayüzü dondurmaz
+    bool dbSuccess = await GoogleSheetService.addNotification(notifMap);
 
     setState(() => _isSending = false);
 
@@ -324,9 +292,14 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       _titleController.clear();
       _messageController.clear();
       _clearSelectedUser();
-      setState(() {});
+      if (_sendLocalNotification) {
+        _showLocalNotification(newNotif.title, newNotif.message);
+      }
     } else {
-      _showSnackBar("❌ Duyuru gönderilemedi!", isError: true);
+      _showSnackBar(
+        "❌ Duyuru buluta gönderilirken bir hata oluştu!",
+        isError: true,
+      );
     }
   }
 
@@ -386,6 +359,40 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     );
   }
 
+  Future<void> _showLocalNotification(String title, String message) async {
+    const AndroidNotificationDetails androidPlatformChannelSpecifics =
+        AndroidNotificationDetails(
+          'manager_notifications_channel',
+          'Yönetici Duyuruları',
+          importance: Importance.max,
+          priority: Priority.high,
+          showWhen: true,
+        );
+    const NotificationDetails platformChannelSpecifics = NotificationDetails(
+      android: androidPlatformChannelSpecifics,
+    );
+    await flutterLocalNotificationsPlugin.show(
+      id: 1,
+      //time: DateTime.now().millisecondsSinceEpoch % 100000,
+      title: title,
+      body: message,
+      notificationDetails: platformChannelSpecifics,
+    );
+  }
+
+  String _formatDateTurkish(String dateStr) {
+    if (dateStr.isEmpty) return '—';
+    try {
+      final parsed = DateTime.parse(dateStr).toLocal();
+      return DateFormat('dd MMMM yyyy HH:mm', 'tr_TR').format(parsed);
+    } catch (_) {
+      return dateStr;
+    }
+  }
+
+  // =========================================================================
+  // 🖼️ RENDER BÖLÜMÜ
+  // =========================================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -393,11 +400,20 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       appBar: AppBar(
         backgroundColor: _surface,
         elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: _textPrimary),
+          onPressed: () => Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => AdminDashboard(currentUserRole: ''),
+            ),
+          ),
+        ),
         title: const Text(
-          "Bildirim Paneli ",
+          "Duyuru & Bildirim",
           style: TextStyle(
             fontWeight: FontWeight.bold,
-            fontSize: 20,
+            fontSize: 18,
             color: _textPrimary,
           ),
         ),
@@ -406,11 +422,15 @@ class _NotificationsScreenState extends State<NotificationsScreen>
           indicatorColor: _accent,
           labelColor: _accent,
           unselectedLabelColor: _textSecondary,
+          labelStyle: const TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 14,
+          ),
           tabs: const [
-            Tab(text: "Yeni Duyuru", icon: Icon(Icons.send, size: 18)),
+            Tab(text: "Yeni Duyuru", icon: Icon(Icons.send_rounded, size: 18)),
             Tab(
               text: "Bildirimlerim",
-              icon: Icon(Icons.notifications, size: 18),
+              icon: Icon(Icons.notifications_rounded, size: 18),
             ),
           ],
         ),
@@ -422,634 +442,606 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     );
   }
 
-  // 🚀 PARALEL VERİ ÇEKEN YENİ METOD
-  Future<Map<String, dynamic>> _loadDataParallel() async {
-    final stopwatch = Stopwatch()..start();
+  Widget _buildSendNotificationTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Telefona Bildirim Gönder Switch Kartı
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: _surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _border),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: _accent.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(
+                        Icons.notifications_active_rounded,
+                        color: _accent,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: const [
+                        Text(
+                          "Telefona Bildirim Gönder",
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            color: _textPrimary,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          "Açıkken bildirim cihaz ekranına düşer",
+                          style: TextStyle(color: _textSecondary, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                Switch(
+                  value: _sendLocalNotification,
+                  onChanged: (val) =>
+                      setState(() => _sendLocalNotification = val),
+                  activeColor: _accent,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
 
-    final results = await Future.wait([
-      GoogleSheetService.getGroupsCached(),
-      GoogleSheetService.getUsersCached(),
-    ]);
+          // Hedef Seçimi Kartı
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: _surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _border),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: _accent.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(
+                        Icons.people_alt_rounded,
+                        color: _accent,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    const Text(
+                      "Hedef Seçimi",
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                        color: _textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    _buildTargetButton(
+                      "Tümü",
+                      Icons.public_rounded,
+                      "Tümü",
+                      _accent,
+                    ),
+                    const SizedBox(width: 10),
+                    _buildTargetButton(
+                      "Grup",
+                      Icons.group_rounded,
+                      "Grup",
+                      _purple,
+                    ),
+                    const SizedBox(width: 10),
+                    _buildTargetButton(
+                      "Kullanıcı",
+                      Icons.person_rounded,
+                      "Kullanıcı",
+                      _info,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
 
-    stopwatch.stop();
-    /* print(
-      "⏱️ Bildirim sayfası verileri PARALEL olarak ${stopwatch.elapsedMilliseconds}ms'de yüklendi",
-    );*/
+          if (_selectedTargetType == "Grup")
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: _surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: _border),
+              ),
+              child: DropdownButtonFormField<String>(
+                value: _selectedGroupId,
+                dropdownColor: _surface,
+                decoration: InputDecoration(
+                  hintText: "Grup seçin",
+                  hintStyle: const TextStyle(
+                    color: _textSecondary,
+                    fontSize: 13,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: _border),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: _border),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                ),
+                items: _allGroups.map((g) {
+                  return DropdownMenuItem(
+                    value: g.groups_id,
+                    child: Text(
+                      g.name,
+                      style: const TextStyle(fontSize: 14, color: _textPrimary),
+                    ),
+                  );
+                }).toList(),
+                onChanged: (val) => setState(() => _selectedGroupId = val),
+              ),
+            ),
 
-    return {
-      'groups': results[0] as List<Group>,
-      'users': results[1] as List<Users>,
-    };
+          if (_selectedTargetType == "Kullanıcı")
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: _surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: _border),
+              ),
+              child: Column(
+                children: [
+                  TextField(
+                    controller: _searchUserController,
+                    style: const TextStyle(color: _textPrimary, fontSize: 14),
+                    decoration: InputDecoration(
+                      hintText: "İsim veya tel yazın...",
+                      hintStyle: const TextStyle(
+                        color: _textSecondary,
+                        fontSize: 13,
+                      ),
+                      prefixIcon: const Icon(
+                        Icons.search_rounded,
+                        size: 18,
+                        color: _textSecondary,
+                      ),
+                      suffixIcon: _searchUserController.text.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(
+                                Icons.close,
+                                size: 16,
+                                color: _textSecondary,
+                              ),
+                              onPressed: _clearSelectedUser,
+                            )
+                          : null,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: _border),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: _border),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                    ),
+                    onChanged: _onSearchChanged,
+                  ),
+                  if (_filteredUsers.isNotEmpty && _selectedUserId == null)
+                    Container(
+                      margin: const EdgeInsets.only(top: 6),
+                      constraints: const BoxConstraints(maxHeight: 180),
+                      decoration: BoxDecoration(
+                        color: _surface,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: _border),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.05),
+                            blurRadius: 6,
+                          ),
+                        ],
+                      ),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: _filteredUsers.length,
+                        itemBuilder: (context, index) {
+                          final user = _filteredUsers[index];
+                          return ListTile(
+                            leading: Icon(
+                              _getRoleIcon(user.role),
+                              color: _getRoleColor(user.role),
+                              size: 18,
+                            ),
+                            title: Text(
+                              "${user.first_name} ${user.last_name}",
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: _textPrimary,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            subtitle: Text(
+                              user.phone,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: _textSecondary,
+                              ),
+                            ),
+                            onTap: () => _selectUser(user),
+                          );
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 14),
+
+          // Duyuru Tipi Kartı
+          Container(
+            padding: const EdgeInsets.all(14),
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: _surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _border),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  "Duyuru Tipi",
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                    color: _textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    _buildTypeButton("Genel", Icons.info_rounded, _info),
+                    _buildTypeButton("Acil", Icons.warning_rounded, _danger),
+                    _buildTypeButton(
+                      "Ödeme Hatırlatması",
+                      Icons.money_rounded,
+                      _warning,
+                    ),
+                    _buildTypeButton(
+                      "Antrenman İptali",
+                      Icons.sports_rounded,
+                      _purple,
+                    ),
+                    _buildTypeButton(
+                      "Maç Duyurusu",
+                      Icons.emoji_events_rounded,
+                      _accent,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // İçerik Formu
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: _surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _border),
+            ),
+            child: Column(
+              children: [
+                TextField(
+                  controller: _titleController,
+                  style: const TextStyle(color: _textPrimary, fontSize: 14),
+                  decoration: InputDecoration(
+                    hintText: "Başlık",
+                    hintStyle: const TextStyle(
+                      color: _textSecondary,
+                      fontSize: 13,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: _border),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: _border),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _messageController,
+                  maxLines: 4,
+                  style: const TextStyle(color: _textPrimary, fontSize: 14),
+                  decoration: InputDecoration(
+                    hintText: "Mesajınızı yazın...",
+                    hintStyle: const TextStyle(
+                      color: _textSecondary,
+                      fontSize: 13,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: _border),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: _border),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _accent,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 0,
+              ),
+              onPressed: _isSending ? null : _sendNotification,
+              child: _isSending
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : const Text(
+                      "Duyuruyu Yayınla",
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                      ),
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
-  Widget _buildSendNotificationTab() {
-    return FutureBuilder<Map<String, dynamic>>(
-      future: _loadDataParallel(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
+  // 🔥 DEĞİŞTİ: Ağır FutureBuilder kaldırıldı, RAM listesi jilet hızında listeleniyor
+  Widget _buildNotificationsListTab() {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator(color: _accent));
+    }
 
-        _allGroups = snapshot.data!['groups'] as List<Group>;
-        final allRawUsers = snapshot.data!['users'] as List<Users>;
-        _allUsers = allRawUsers.where((u) {
-          final r = u.role.toLowerCase();
-          return ["student", "coach", "accountant", "admin"].contains(r);
-        }).toList();
+    if (_cachedNotifications.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.notifications_off_rounded,
+              size: 48,
+              color: Colors.grey.shade400,
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              "Henüz bir bildirim bulunmuyor.",
+              style: TextStyle(color: _textSecondary, fontSize: 13),
+            ),
+          ],
+        ),
+      );
+    }
 
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            children: [
-              // Telefona Bildirim Switch Kartı
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: _surface,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: _border),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.03),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
+    return RefreshIndicator(
+      onRefresh: () async => _refreshData(),
+      color: _accent,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(12),
+        physics:
+            const AlwaysScrollableScrollPhysics(), // Kaydırma pürüzsüzlüğü kilidi
+        itemCount: _cachedNotifications.length,
+        itemBuilder: (context, index) {
+          final notif = _cachedNotifications[index];
+          final color = _getTypeColor(notif.type);
+          final icon = _getTypeIcon(notif.type);
+          final isRead = notif.is_read.toUpperCase() == 'TRUE';
+          final currentUserId = widget.currentUser?.app?.toString() ?? "Admin";
+
+          return Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            decoration: BoxDecoration(
+              color: _surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: isRead ? _border : color.withOpacity(0.4),
+                width: isRead ? 1 : 1.5,
+              ),
+              boxShadow: [
+                BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 6),
+              ],
+            ),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(16),
+              onTap: () => _showNotificationDetail({
+                'title': notif.title,
+                'message': notif.message,
+                'type': notif.type,
+                'sent_at': notif.sent_at,
+              }),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: _accent.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Icon(
-                            Icons.notifications_active,
-                            color: _accent,
-                            size: 22,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              "Telefona Bildirim Gönder",
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                              ),
-                            ),
-                            Text(
-                              "Açıkken bildirim telefonunuza da gelir",
-                              style: TextStyle(
-                                color: _textSecondary,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
+                    CircleAvatar(
+                      backgroundColor: color.withOpacity(0.1),
+                      child: Text(icon, style: const TextStyle(fontSize: 18)),
                     ),
-                    Switch(
-                      value: _sendLocalNotification,
-                      onChanged: (val) =>
-                          setState(() => _sendLocalNotification = val),
-                      activeColor: _accent,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Hedef Seçimi Kartı
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: _surface,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: _border),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.03),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: _accent.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Icon(
-                            Icons.people_alt_rounded,
-                            color: _accent,
-                            size: 22,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        const Text(
-                          "Hedef Seçimi",
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        _buildTargetButton(
-                          "Tümü",
-                          Icons.public_rounded,
-                          "Tümü",
-                          _accent,
-                        ),
-                        const SizedBox(width: 12),
-                        _buildTargetButton(
-                          "Grup",
-                          Icons.group_rounded,
-                          "Grup",
-                          _purple,
-                        ),
-                        const SizedBox(width: 12),
-                        _buildTargetButton(
-                          "Kullanıcı",
-                          Icons.person_rounded,
-                          "Kullanıcı",
-                          _info,
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Grup Seç (eğer grup seçiliyse)
-              if (_selectedTargetType == "Grup")
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: _surface,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: _border),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.03),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: _purple.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Icon(
-                              Icons.group_rounded,
-                              color: _purple,
-                              size: 22,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          const Text(
-                            "Grup Seç",
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        value: _selectedGroupId,
-                        decoration: InputDecoration(
-                          hintText: "Grup seçin",
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 12,
-                          ),
-                        ),
-                        items: _allGroups
-                            .map(
-                              (g) => DropdownMenuItem(
-                                value: g.groups_id,
-                                child: Text(g.name),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (val) =>
-                            setState(() => _selectedGroupId = val),
-                      ),
-                    ],
-                  ),
-                ),
-              const SizedBox(height: 16),
-
-              // Kullanıcı Ara (eğer kullanıcı seçiliyse)
-              if (_selectedTargetType == "Kullanıcı")
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: _surface,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: _border),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.03),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: _info.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Icon(
-                              Icons.search_rounded,
-                              color: _info,
-                              size: 22,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          const Text(
-                            "Kullanıcı Ara",
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: _searchUserController,
-                        style: const TextStyle(color: _textPrimary),
-                        decoration: InputDecoration(
-                          hintText: "İsim, email veya rol ile ara...",
-                          hintStyle: TextStyle(color: _textSecondary),
-                          prefixIcon: Icon(
-                            Icons.search_rounded,
-                            color: _textSecondary,
-                            size: 20,
-                          ),
-                          suffixIcon: _searchUserController.text.isNotEmpty
-                              ? IconButton(
-                                  icon: Icon(
-                                    Icons.close,
-                                    color: _textSecondary,
-                                    size: 18,
-                                  ),
-                                  onPressed: _clearSelectedUser,
-                                )
-                              : null,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 12,
-                          ),
-                        ),
-                      ),
-                      if (_filteredUsers.isNotEmpty && _selectedUserId == null)
-                        Container(
-                          margin: const EdgeInsets.only(top: 8),
-                          constraints: const BoxConstraints(maxHeight: 250),
-                          decoration: BoxDecoration(
-                            color: _surface,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: _border),
-                          ),
-                          child: ListView.builder(
-                            shrinkWrap: true,
-                            itemCount: _filteredUsers.length,
-                            itemBuilder: (context, index) {
-                              final user = _filteredUsers[index];
-                              return ListTile(
-                                leading: Icon(
-                                  _getRoleIcon(user.role),
-                                  color: _getRoleColor(user.role),
-                                ),
-                                title: Text(
-                                  "${user.first_name} ${user.last_name}",
-                                  style: const TextStyle(fontSize: 14),
-                                ),
-                                subtitle: Text(
-                                  _getRoleText(user.role),
-                                  style: const TextStyle(fontSize: 12),
-                                ),
-                                onTap: () => _selectUser(user),
-                              );
-                            },
-                          ),
-                        ),
-                      if (_selectedUserId != null)
-                        Container(
-                          margin: const EdgeInsets.only(top: 8),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: _accent.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Row(
+                          Row(
                             children: [
-                              const Icon(
-                                Icons.check_circle,
-                                color: _accent,
-                                size: 18,
-                              ),
-                              const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
-                                  "Seçili: $_selectedUserId",
-                                  style: const TextStyle(fontSize: 13),
+                                  notif.title,
+                                  style: TextStyle(
+                                    fontWeight: isRead
+                                        ? FontWeight.w600
+                                        : FontWeight.bold,
+                                    fontSize: 14,
+                                    color: _textPrimary,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ),
-                              IconButton(
-                                icon: const Icon(Icons.close, size: 16),
-                                onPressed: _clearSelectedUser,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                              ),
+                              if (notif.sender_id == currentUserId)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: _surfaceLight,
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: const Text(
+                                    "Siz",
+                                    style: TextStyle(
+                                      fontSize: 9,
+                                      color: _textSecondary,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
                             ],
                           ),
-                        ),
-                    ],
-                  ),
-                ),
-              const SizedBox(height: 16),
-
-              // Duyuru Tipi Kartı
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: _surface,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: _border),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.03),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: _info.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Icon(
-                            Icons.label_important_rounded,
-                            color: _info,
-                            size: 22,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        const Text(
-                          "Duyuru Tipi",
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        _buildTypeButton("Genel", Icons.info_rounded, _info),
-                        _buildTypeButton(
-                          "Acil",
-                          Icons.warning_rounded,
-                          _danger,
-                        ),
-                        _buildTypeButton(
-                          "Ödeme Hatırlatması",
-                          Icons.money_rounded,
-                          _warning,
-                        ),
-                        _buildTypeButton(
-                          "Antrenman İptali",
-                          Icons.sports_rounded,
-                          _purple,
-                        ),
-                        _buildTypeButton(
-                          "Maç Duyurusu",
-                          Icons.emoji_events_rounded,
-                          _accent,
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // İçerik Kartı
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: _surface,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: _border),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.03),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: _accent.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Icon(
-                            Icons.edit_note_rounded,
-                            color: _accent,
-                            size: 22,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        const Text(
-                          "İçerik",
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: _titleController,
-                      style: const TextStyle(color: _textPrimary),
-                      decoration: InputDecoration(
-                        hintText: "Başlık",
-                        hintStyle: TextStyle(color: _textSecondary),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 12,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _messageController,
-                      maxLines: 4,
-                      style: const TextStyle(color: _textPrimary),
-                      decoration: InputDecoration(
-                        hintText: "Mesajınızı yazın...",
-                        hintStyle: TextStyle(color: _textSecondary),
-                        alignLabelWithHint: true,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 12,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-
-              // Gönder Butonu
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _accent,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    elevation: 0,
-                  ),
-                  onPressed: _isSending ? null : _sendNotification,
-                  child: _isSending
-                      ? const SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: const [
-                            Icon(Icons.send, color: Colors.white, size: 18),
-                            SizedBox(width: 8),
-                            Text(
-                              "Duyuruyu Yayınla",
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.bold,
-                              ),
+                          const SizedBox(height: 4),
+                          Text(
+                            notif.message,
+                            style: const TextStyle(
+                              color: _textSecondary,
+                              fontSize: 12,
                             ),
-                          ],
-                        ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            _formatDateTurkish(notif.sent_at),
+                            style: const TextStyle(
+                              color: _textTertiary,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 24),
-            ],
-          ),
-        );
-      },
+            ),
+          );
+        },
+      ),
     );
   }
 
   Widget _buildTargetButton(
-    String label,
+    String type,
     IconData icon,
-    String value,
-    Color color,
+    String label,
+    Color targetColor,
   ) {
-    final isSelected = _selectedTargetType == value;
+    bool isSelected = _selectedTargetType == type;
     return Expanded(
-      child: GestureDetector(
-        onTap: () {
-          setState(() {
-            _selectedTargetType = value;
-            _clearSelectedUser();
-            _selectedGroupId = null;
-          });
-        },
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 12),
+      child: InkWell(
+        onTap: () => setState(() {
+          _selectedTargetType = type;
+          if (type != "Kullanıcı") _clearSelectedUser();
+          if (type != "Grup") _selectedGroupId = null;
+        }),
+        borderRadius: BorderRadius.circular(12),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
-            color: isSelected ? color.withOpacity(0.1) : _surfaceLight,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: isSelected ? color : _border, width: 1.5),
+            color: isSelected ? targetColor.withOpacity(0.1) : _surfaceLight,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isSelected ? targetColor : _border,
+              width: 1.5,
+            ),
           ),
           child: Column(
             children: [
-              Icon(icon, color: isSelected ? color : _textSecondary, size: 22),
-              const SizedBox(height: 6),
+              Icon(
+                icon,
+                color: isSelected ? targetColor : _textSecondary,
+                size: 20,
+              ),
+              const SizedBox(height: 4),
               Text(
                 label,
                 style: TextStyle(
-                  color: isSelected ? color : _textSecondary,
+                  color: isSelected ? targetColor : _textPrimary,
                   fontSize: 12,
-                  fontWeight: FontWeight.w500,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                 ),
               ),
             ],
@@ -1059,28 +1051,34 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     );
   }
 
-  Widget _buildTypeButton(String label, IconData icon, Color color) {
-    final isSelected = _selectedType == label;
-    return GestureDetector(
-      onTap: () => setState(() => _selectedType = label),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+  Widget _buildTypeButton(String type, IconData icon, Color typeColor) {
+    bool isSelected = _selectedType == type;
+    return InkWell(
+      onTap: () => setState(() => _selectedType = type),
+      borderRadius: BorderRadius.circular(10),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          color: isSelected ? color.withOpacity(0.1) : _surfaceLight,
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: isSelected ? color : _border, width: 1),
+          color: isSelected ? typeColor.withOpacity(0.1) : _surfaceLight,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: isSelected ? typeColor : _border),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: isSelected ? color : _textSecondary, size: 16),
+            Icon(
+              icon,
+              color: isSelected ? typeColor : _textSecondary,
+              size: 14,
+            ),
             const SizedBox(width: 6),
             Text(
-              label,
+              type,
               style: TextStyle(
-                color: isSelected ? color : _textSecondary,
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
+                color: isSelected ? typeColor : _textPrimary,
+                fontSize: 11,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
               ),
             ),
           ],
@@ -1089,209 +1087,21 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     );
   }
 
-  // NotificationsScreen.dart - Bildirimleri gösterirken
-
-  // _buildNotificationsListTab fonksiyonunu DEĞİŞTİR:
-  // 🔥 MÜDÜR/YÖNETİCİ PANELİNDEKİ LİSTELEME FİLTRESİ (BUNUNLA DEĞİŞTİR)
-  Widget _buildNotificationsListTab() {
-    return FutureBuilder<List<Map<String, dynamic>>>(
-      // Gönderen kim olursa olsun, sadece bu kullanıcının alıcı (recipient_id) olduğu verileri getirir
-      future: GoogleSheetService.getNotificationsForUser(_getCurrentUserId()),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-
-        if (snapshot.hasError) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.error_outline, size: 48, color: Colors.grey),
-                const SizedBox(height: 12),
-                const Text("Bildirimler yüklenirken hata oluştu"),
-                const SizedBox(height: 8),
-                TextButton(
-                  onPressed: () => setState(() {}),
-                  child: const Text("Tekrar Dene"),
-                ),
-              ],
-            ),
-          );
-        }
-
-        final notifications = snapshot.data ?? [];
-
-        if (notifications.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.notifications_off_rounded,
-                  size: 64,
-                  color: Colors.grey.shade400,
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  "Henüz bildirim yok",
-                  style: TextStyle(color: Colors.grey.shade600, fontSize: 16),
-                ),
-              ],
-            ),
-          );
-        }
-
-        return ListView.builder(
-          padding: const EdgeInsets.all(12),
-          itemCount: notifications.length,
-          itemBuilder: (context, index) {
-            final notif = notifications[index];
-            final dbType = notif['type']?.toString() ?? 'announcement';
-            final color = _getTypeColor(dbType);
-            final icon = _getTypeIcon(dbType);
-            final isRead = notif['is_read']?.toString().toUpperCase() == 'TRUE';
-
-            // Gönderen bilgisini kontrol et (Sadece "Siz" etiketini basmak için, filtreyi etkilemez)
-            final senderId = notif['sender_id']?.toString() ?? '';
-            final isOwnNotification = senderId == _getCurrentUserId();
-
-            return Container(
-              margin: const EdgeInsets.only(bottom: 10),
-              decoration: BoxDecoration(
-                color: _surface,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: isRead ? _border : color.withOpacity(0.3),
-                  width: isRead ? 1 : 1.5,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.02),
-                    blurRadius: 4,
-                    offset: const Offset(0, 1),
-                  ),
-                ],
-              ),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(16),
-                  onTap: () => _showNotificationDetail(notif),
-                  child: Padding(
-                    padding: const EdgeInsets.all(14),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 48,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            color: color.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                          child: Center(
-                            child: Text(
-                              icon,
-                              style: const TextStyle(fontSize: 22),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      notif['title'] ?? '',
-                                      style: TextStyle(
-                                        fontWeight: isRead
-                                            ? FontWeight.w600
-                                            : FontWeight.bold,
-                                        fontSize: 15,
-                                        color: _textPrimary,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  if (isOwnNotification)
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 6,
-                                        vertical: 2,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: Colors.grey.shade200,
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                      child: const Text(
-                                        "Siz",
-                                        style: TextStyle(
-                                          fontSize: 9,
-                                          color: Colors.grey,
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                notif['message'] ?? '',
-                                style: TextStyle(
-                                  color: _textSecondary,
-                                  fontSize: 13,
-                                ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                _formatDateTurkish(notif['sent_at'] ?? ''),
-                                style: TextStyle(
-                                  color: _textTertiary,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (!isRead)
-                          Container(
-                            width: 10,
-                            height: 10,
-                            decoration: BoxDecoration(
-                              color: color,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
   void _showNotificationDetail(Map<String, dynamic> notif) {
-    final dbType = notif['type']?.toString() ?? 'announcement';
-    final color = _getTypeColor(dbType);
-    final icon = _getTypeIcon(dbType);
-    final formattedDate = _formatDateLongTurkish(notif['sent_at'] ?? '');
+    final color = _getTypeColor(notif['type'] ?? '');
+    final icon = _getTypeIcon(notif['type'] ?? '');
 
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
         decoration: const BoxDecoration(
           color: _surface,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1312,21 +1122,11 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                 children: [
                   Row(
                     children: [
-                      Container(
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: color.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Center(
-                          child: Text(
-                            icon,
-                            style: const TextStyle(fontSize: 22),
-                          ),
-                        ),
+                      CircleAvatar(
+                        backgroundColor: color.withOpacity(0.1),
+                        child: Text(icon, style: const TextStyle(fontSize: 18)),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 14),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1334,16 +1134,17 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                             Text(
                               notif['title'] ?? '',
                               style: const TextStyle(
-                                fontSize: 18,
+                                fontSize: 16,
                                 fontWeight: FontWeight.bold,
+                                color: _textPrimary,
                               ),
                             ),
-                            const SizedBox(height: 4),
+                            const SizedBox(height: 2),
                             Text(
-                              formattedDate,
-                              style: TextStyle(
-                                color: _textSecondary,
-                                fontSize: 12,
+                              _formatDateTurkish(notif['sent_at'] ?? ''),
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: _textTertiary,
                               ),
                             ),
                           ],
@@ -1351,8 +1152,9 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                       ),
                     ],
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 16),
                   Container(
+                    width: double.infinity,
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       color: _surfaceLight,
@@ -1360,7 +1162,11 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                     ),
                     child: Text(
                       notif['message'] ?? '',
-                      style: const TextStyle(fontSize: 14, height: 1.4),
+                      style: const TextStyle(
+                        fontSize: 14,
+                        height: 1.4,
+                        color: _textPrimary,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 20),
@@ -1375,7 +1181,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                         ),
                         padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
-                      child: Text(
+                      child: const Text(
                         "Kapat",
                         style: TextStyle(
                           color: _accent,

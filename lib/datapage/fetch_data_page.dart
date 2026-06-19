@@ -171,7 +171,7 @@ class GoogleSheetService {
   static final DataCache _cache = DataCache();
 
   static const String _baseUrl =
-      "https://script.google.com/macros/s/AKfycby3EW0jopQmtAZf-v_TVW8oNUS7BANs6EuMgAi4bisyz07gtlWqAQtPFIF6eIIf_cTXRg/exec";
+      "https://script.google.com/macros/s/AKfycbyPokHSOEp08uz2SgbQ6z7LFwZ2P6mMb77XmQZAzZNYsRSxnpKohgkP3uPmAALk96RhMg/exec";
 
   // =========================================================================
   // 🔥 MERKEZİ POST FONKSİYONU
@@ -179,6 +179,10 @@ class GoogleSheetService {
   static Future<http.Response?> _postRequest(
     Map<String, dynamic> bodyData,
   ) async {
+    print("🌐 _postRequest gönderiliyor:");
+    print("   URL: $_baseUrl");
+    print("   Body: ${jsonEncode(bodyData)}");
+
     try {
       var response = await http.post(
         Uri.parse(_baseUrl),
@@ -186,9 +190,14 @@ class GoogleSheetService {
         body: jsonEncode(bodyData),
       );
 
+      print("🌐 _postRequest yanıtı:");
+      print("   Status: ${response.statusCode}");
+      print(
+        "   Body: ${response.body.substring(0, response.body.length > 500 ? 500 : response.body.length)}",
+      );
+
       if (response.statusCode == 302) {
         String? redirectUrl = response.headers['location'];
-
         if (redirectUrl == null && response.body.contains('HREF="')) {
           final start = response.body.indexOf('HREF="') + 6;
           final end = response.body.indexOf('"', start);
@@ -196,14 +205,16 @@ class GoogleSheetService {
               .substring(start, end)
               .replaceAll('&amp;', '&');
         }
-
         if (redirectUrl != null) {
+          print("🌐 Redirect: $redirectUrl");
           response = await http.get(Uri.parse(redirectUrl));
+          print("🌐 Redirect yanıtı: ${response.statusCode}");
         }
       }
 
       return response;
     } catch (e) {
+      print("❌ _postRequest hatası: $e");
       return null;
     }
   }
@@ -1581,10 +1592,21 @@ class GoogleSheetService {
   // =========================================================================
 
   static Future<bool> registerEverywhere(Map<String, dynamic> allInfo) async {
+    print("📤 registerEverywhere gönderiliyor:");
+    print(jsonEncode(allInfo));
+
     final response = await _postRequest({
       "action": "registerEverywhere",
       "data": allInfo,
     });
+
+    if (response != null) {
+      print("📡 registerEverywhere yanıtı:");
+      print("   Status: ${response.statusCode}");
+      print("   Body: ${response.body}");
+    } else {
+      print("❌ registerEverywhere: Yanıt NULL!");
+    }
 
     if (response != null && response.statusCode == 200) {
       final decoded = jsonDecode(response.body);
@@ -1592,6 +1614,7 @@ class GoogleSheetService {
       if (success) {
         invalidateAllCache();
       }
+      print("📡 registerEverywhere success: $success");
       return success;
     }
     return false;

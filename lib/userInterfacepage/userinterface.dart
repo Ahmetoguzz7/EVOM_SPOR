@@ -130,6 +130,21 @@ class _PersonalTrainerState extends State<PersonalTrainer> {
 
   Future<void> _loadDataFromRepository() async {
     try {
+      // 🔥🔥🔥 KONTROL EKLE 🔥🔥🔥
+      final coachId = widget.coachData.coach_id.trim();
+      if (coachId.isEmpty) {
+        print("❌ HATA: coachData.coach_id BOŞ!");
+        if (mounted) {
+          setState(() {
+            _error = "Antrenör ID'si bulunamadı! Lütfen tekrar giriş yapın.";
+            _isLoading = false;
+          });
+        }
+        return;
+      }
+
+      print("✅ coachId: $coachId");
+
       if (!_repo.isLoaded) {
         await _repo.loadCriticalData(
           onProgress: (p) {
@@ -140,8 +155,8 @@ class _PersonalTrainerState extends State<PersonalTrainer> {
         );
       }
 
-      final myGroups = _repo.getGroupsByCoachId(widget.coachData.coach_id);
-      final myStudents = _repo.getStudentsByCoachId(widget.coachData.coach_id);
+      final myGroups = _repo.getGroupsByCoachId(coachId);
+      final myStudents = _repo.getStudentsByCoachId(coachId);
 
       // TÜM FİLTRELENMİŞ BİLDİRİMLER (backend filtresi)
       final allFilteredNotifications = _getFilteredNotificationsForCoach();
@@ -411,7 +426,7 @@ class _PersonalTrainerState extends State<PersonalTrainer> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     if (!_isLoading) ...[
-                      _buildTodayTrainingCard(),
+                      //   _buildTodayTrainingCard(),
                       const SizedBox(height: 20),
                     ],
 
@@ -1322,7 +1337,7 @@ class _PersonalTrainerState extends State<PersonalTrainer> {
               _formatDateLongTurkish(widget.coachData.hired_at),
             ),
             const Divider(),
-            _infoRow(Icons.info, "Hakkımda", widget.coachData.bio),
+            // _infoRow(Icons.info, "Hakkımda", widget.coachData.bio),
             const SizedBox(height: 20),
           ],
         ),

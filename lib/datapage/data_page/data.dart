@@ -24,6 +24,7 @@ class Users {
   final String father_name;
   final String father_phone;
   final String fcm_token;
+  final String supervisor_coach_id;
   Users({
     required this.app,
     required this.branches_id,
@@ -44,6 +45,7 @@ class Users {
     this.father_name = "",
     this.father_phone = "",
     this.fcm_token = "",
+    this.supervisor_coach_id = '',
   });
 
   factory Users.fromJson(Map<String, dynamic> json) {
@@ -67,6 +69,7 @@ class Users {
       father_name: json['father_name']?.toString() ?? '',
       father_phone: json['father_phone']?.toString() ?? '',
       fcm_token: json['fcm_token']?.toString() ?? '', // 🔥 BUNU EKLE
+      supervisor_coach_id: json['supervisor_coach_id']?.toString() ?? '',
     );
   }
 
@@ -91,6 +94,7 @@ class Users {
       'father_name': father_name,
       'father_phone': father_phone,
       'fcm_token': fcm_token,
+      'supervisor_coach_id': supervisor_coach_id,
     };
   }
 }
@@ -181,6 +185,7 @@ class Coach {
   final String certificate_info;
   final String monthly_salary;
   final String hired_at;
+  final String supervisor_coach_id;
 
   Coach({
     required this.coach_id,
@@ -191,6 +196,7 @@ class Coach {
     required this.certificate_info,
     required this.monthly_salary,
     required this.hired_at,
+    this.supervisor_coach_id = '',
   });
 
   factory Coach.fromJson(Map<String, dynamic> json) {
@@ -208,6 +214,7 @@ class Coach {
       certificate_info: clean['certificate_info']?.toString() ?? '',
       monthly_salary: clean['monthly_salary']?.toString() ?? '0',
       hired_at: clean['hired_at']?.toString() ?? '',
+      supervisor_coach_id: json['supervisor_coach_id']?.toString() ?? '',
     );
   }
 
@@ -220,6 +227,7 @@ class Coach {
     'certificate_info': certificate_info,
     'monthly_salary': monthly_salary,
     'hired_at': hired_at,
+    'supervisor_coach_id': supervisor_coach_id,
   };
 }
 

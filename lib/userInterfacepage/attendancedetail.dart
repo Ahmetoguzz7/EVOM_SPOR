@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:EVOM_SPOR/datapage/data_page/data.dart';
 import 'package:EVOM_SPOR/datapage/fetch_data_page.dart';
+import 'package:EVOM_SPOR/core/app_repository.dart';
+import 'package:EVOM_SPOR/managerpage/manager_offline/offline_attendance_service.dart';
 
-class YoklamaSayfasi extends StatelessWidget {
+class YoklamaSayfasi extends StatefulWidget {
   final Group selectedGroup;
   final Users currentUser;
 
@@ -14,17 +18,46 @@ class YoklamaSayfasi extends StatelessWidget {
     required this.currentUser,
   });
 
+  @override
+  State<YoklamaSayfasi> createState() => _YoklamaSayfasiState();
+}
+
+class _YoklamaSayfasiState extends State<YoklamaSayfasi> {
+  final AppRepository _repo = AppRepository();
+  late final OfflineAttendanceService _offlineService;
+
+  String _refreshKey = DateTime.now().millisecondsSinceEpoch.toString();
+
+  @override
+  void initState() {
+    super.initState();
+    _initOfflineService();
+  }
+
+  Future<void> _initOfflineService() async {
+    _offlineService = OfflineAttendanceService();
+    await _offlineService.init();
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
   String _getTodayDateTurkish() {
     final now = DateTime.now();
     final formatter = DateFormat('dd MMMM yyyy', 'tr_TR');
     return formatter.format(now);
   }
 
+  Future<void> _refreshData() async {
+    if (mounted) {
+      setState(() {
+        _refreshKey = DateTime.now().millisecondsSinceEpoch.toString();
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final Future<Map<String, dynamic>> attendanceDataFuture =
-        _loadAttendanceData();
-
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
@@ -32,7 +65,7 @@ class YoklamaSayfasi extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              selectedGroup.name,
+              widget.selectedGroup.name,
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 2),
@@ -43,96 +76,109 @@ class YoklamaSayfasi extends StatelessWidget {
         foregroundColor: Colors.black87,
         elevation: 0,
         centerTitle: false,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _refreshData,
+            tooltip: "Yenile",
+          ),
+        ],
       ),
-      body: FutureBuilder<Map<String, dynamic>>(
-        future: attendanceDataFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircularProgressIndicator(color: Colors.indigo),
-                  SizedBox(height: 16),
-                  Text("Yoklama verileri yükleniyor..."),
-                ],
-              ),
+      body: RefreshIndicator(
+        onRefresh: _refreshData,
+        child: FutureBuilder<Map<String, dynamic>>(
+          key: ValueKey(_refreshKey),
+          future: _loadAttendanceData(),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircularProgressIndicator(color: Colors.indigo),
+                    SizedBox(height: 16),
+                    Text("Yoklama verileri yükleniyor..."),
+                  ],
+                ),
+              );
+            }
+
+            if (snapshot.hasError) {
+              return Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.error_outline,
+                      size: 64,
+                      color: Colors.red.shade300,
+                    ),
+                    const SizedBox(height: 16),
+                    const Text("Veriler yüklenirken hata oluştu"),
+                    const SizedBox(height: 24),
+                    ElevatedButton.icon(
+                      onPressed: _refreshData,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text("Tekrar Dene"),
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            final yoklamaListesi =
+                snapshot.data?['yoklamaListesi']
+                    as List<Map<String, dynamic>>? ??
+                [];
+            final students = snapshot.data?['students'] as List<Users>? ?? [];
+
+            if (students.isEmpty) {
+              return Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.people_outline,
+                      size: 64,
+                      color: Colors.grey.shade400,
+                    ),
+                    const SizedBox(height: 16),
+                    const Text("Bu grupta henüz öğrenci yok"),
+                  ],
+                ),
+              );
+            }
+
+            return _YoklamaWidget(
+              key: ValueKey('yoklama_widget_$_refreshKey'),
+              yoklamaListesi: yoklamaListesi,
+              selectedGroup: widget.selectedGroup,
+              currentUser: widget.currentUser,
+              onSaveComplete: _refreshData,
             );
-          }
-
-          if (snapshot.hasError) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.error_outline,
-                    size: 64,
-                    color: Colors.red.shade300,
-                  ),
-                  const SizedBox(height: 16),
-                  const Text("Veriler yüklenirken hata oluştu"),
-                  const SizedBox(height: 24),
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      GoogleSheetService.invalidateCache('users');
-                      GoogleSheetService.invalidateCache('group_students');
-                      GoogleSheetService.invalidateCache('attendances');
-                      (context as Element).reassemble();
-                    },
-                    icon: const Icon(Icons.refresh),
-                    label: const Text("Tekrar Dene"),
-                  ),
-                ],
-              ),
-            );
-          }
-
-          final yoklamaListesi =
-              snapshot.data?['yoklamaListesi'] as List<Map<String, dynamic>>? ??
-              [];
-          final students = snapshot.data?['students'] as List<Users>? ?? [];
-
-          if (students.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.people_outline,
-                    size: 64,
-                    color: Colors.grey.shade400,
-                  ),
-                  const SizedBox(height: 16),
-                  const Text("Bu grupta henüz öğrenci yok"),
-                ],
-              ),
-            );
-          }
-
-          return _YoklamaWidget(
-            yoklamaListesi: yoklamaListesi,
-            selectedGroup: selectedGroup,
-            currentUser: currentUser,
-          );
-        },
+          },
+        ),
       ),
     );
   }
 
+  /// 🔥 SADECE LOKAL VERİYİ KULLAN
   Future<Map<String, dynamic>> _loadAttendanceData() async {
     final now = DateTime.now();
     final formattedDate =
         "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
 
-    final allUsers = await GoogleSheetService.getUsersCached();
-    final allRelations = await GoogleSheetService.getGroupStudentsCached();
-    final allAttendances = await GoogleSheetService.getAttendancesCached();
+    if (!_repo.isLoaded) {
+      await _repo.loadAllData();
+    }
+
+    final allUsers = _repo.allUsers;
+    final allRelations = _repo.allGroupStudents;
 
     final groupRelations = allRelations
         .where(
           (rel) =>
-              rel.groups_id == selectedGroup.groups_id &&
+              rel.groups_id == widget.selectedGroup.groups_id &&
               rel.is_active.toUpperCase() == "TRUE",
         )
         .toList();
@@ -146,57 +192,58 @@ class YoklamaSayfasi extends StatelessWidget {
         )
         .toList();
 
-    final todayAttendances = allAttendances.where((a) {
-      final attDate = a.attendance_date.split('T')[0];
-      return attDate == formattedDate;
-    }).toList();
+    // 🔥 LOKAL VERİLERİ ÇEK
+    await _offlineService.init();
+    final localAttendances = await _offlineService.getLocalAttendances(
+      widget.selectedGroup.groups_id,
+      now,
+    );
 
     final List<Map<String, dynamic>> yoklamaListesi = [];
     for (var ogrenci in students) {
-      Attendance? foundAttendance;
-      for (var att in todayAttendances) {
-        if (att.student_id == ogrenci.app) {
-          foundAttendance = att;
-          break;
-        }
-      }
-
-      bool isPresent = false;
-      if (foundAttendance != null) {
-        final statusValue = foundAttendance.status;
-        if (statusValue == true ||
-            statusValue == "TRUE" ||
-            statusValue == "true") {
-          isPresent = true;
-        }
-      }
+      final localAtt = localAttendances.firstWhere(
+        (att) => att.student_id == ogrenci.app,
+        orElse: () => Attendance(
+          attendances_id: "",
+          groups_id: "",
+          student_id: "",
+          taken_by: "",
+          attendance_date: "",
+          status: "FALSE",
+          note: "",
+        ),
+      );
 
       yoklamaListesi.add({
         "student": ogrenci,
-        "is_present": isPresent,
-        "note": foundAttendance?.note ?? "",
-        "has_attendance": foundAttendance != null,
+        "is_present": localAtt.status == "TRUE",
+        "note": localAtt.note,
+        "has_attendance": localAtt.attendances_id.isNotEmpty,
+        "attendance_id": localAtt.attendances_id,
       });
     }
 
     return {
       'students': students,
       'yoklamaListesi': yoklamaListesi,
-      'hasSaved': todayAttendances.isNotEmpty,
+      'hasSaved': localAttendances.isNotEmpty,
     };
   }
 }
 
-// 🔥 YENİ YOKLAMA WIDGET - TakeAttendanceScreen tasarımı ile
+// 🔥 OFFLINE-FIRST YOKLAMA WIDGET
 class _YoklamaWidget extends StatefulWidget {
   final List<Map<String, dynamic>> yoklamaListesi;
   final Group selectedGroup;
   final Users currentUser;
+  final VoidCallback onSaveComplete;
 
   const _YoklamaWidget({
+    super.key,
     required this.yoklamaListesi,
     required this.selectedGroup,
     required this.currentUser,
+    required this.onSaveComplete,
   });
 
   @override
@@ -204,6 +251,8 @@ class _YoklamaWidget extends StatefulWidget {
 }
 
 class _YoklamaWidgetState extends State<_YoklamaWidget> {
+  final AppRepository _repo = AppRepository();
+  late final OfflineAttendanceService _offlineService;
   late List<Map<String, dynamic>> _yoklamaListesi;
   bool _hasUnsavedChanges = false;
   bool _isSaving = false;
@@ -211,19 +260,57 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
   String _selectedFilter = "Tümü";
   final List<String> _filterOptions = ["Tümü", "Gelenler", "Gelmeyenler"];
 
-  static const Color _bg = Color(0xFFF8FAFC);
-  static const Color _surface = Colors.white;
-  static const Color _accent = Color(0xFF0EA5E9);
-  static const Color _textPrimary = Color(0xFF0F172A);
-  static const Color _textSecondary = Color(0xFF64748B);
+  String? _lastSaveMessage;
+  bool _showSuccess = false;
+  StreamSubscription<List<Attendance>>? _syncSubscription;
+  Timer? _successMessageTimer;
+  bool _isLoadingLocalData = false;
 
   @override
   void initState() {
     super.initState();
     _yoklamaListesi = List.from(widget.yoklamaListesi);
+    _initOfflineService();
+  }
+
+  Future<void> _initOfflineService() async {
+    _offlineService = OfflineAttendanceService();
+    await _offlineService.init();
+
+    _syncSubscription = _offlineService.onSyncComplete.listen((attendances) {
+      if (mounted) {
+        print("📢 Sync tamamlandı, lokal veriler yenileniyor...");
+        _refreshLocalData();
+      }
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _refreshLocalData();
+    });
+  }
+
+  @override
+  void dispose() {
+    _syncSubscription?.cancel();
+    _successMessageTimer?.cancel();
+    // Service'i dispose ETME!
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(_YoklamaWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.yoklamaListesi != widget.yoklamaListesi && mounted) {
+      setState(() {
+        _yoklamaListesi = List.from(widget.yoklamaListesi);
+        _hasUnsavedChanges = false;
+      });
+      _refreshLocalData();
+    }
   }
 
   void _updateAttendance(int index, bool value) {
+    if (!mounted) return;
     setState(() {
       _yoklamaListesi[index]["is_present"] = value;
       _hasUnsavedChanges = true;
@@ -231,10 +318,108 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
   }
 
   void _updateNote(int index, String note) {
+    if (!mounted) return;
     setState(() {
       _yoklamaListesi[index]["note"] = note;
       _hasUnsavedChanges = true;
     });
+  }
+
+  Future<void> _saveAttendance() async {
+    if (!_hasUnsavedChanges) return;
+    if (!mounted) return;
+
+    setState(() {
+      _isSaving = true;
+      _showSuccess = false;
+    });
+
+    await _offlineService.init();
+
+    final now = DateTime.now();
+    final result = await _offlineService.saveAttendanceBatch(
+      _yoklamaListesi,
+      now,
+      widget.selectedGroup,
+      widget.currentUser,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _isSaving = false;
+      _hasUnsavedChanges = false;
+      _lastSaveMessage =
+          "✅ ${result['savedCount']} öğrencinin yoklaması kaydedildi!";
+      _showSuccess = true;
+    });
+
+    await _refreshLocalData();
+
+    _successMessageTimer?.cancel();
+    _successMessageTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) {
+        setState(() {
+          _showSuccess = false;
+        });
+      }
+    });
+
+    widget.onSaveComplete();
+  }
+
+  Future<void> _refreshLocalData() async {
+    if (!mounted) return;
+    if (_isLoadingLocalData) return;
+
+    _isLoadingLocalData = true;
+
+    final now = DateTime.now();
+    final localAttendances = await _offlineService.getLocalAttendances(
+      widget.selectedGroup.groups_id,
+      now,
+    );
+
+    if (!mounted) {
+      _isLoadingLocalData = false;
+      return;
+    }
+
+    // 🔥 YEPYENİ BİR LİSTE OLUŞTUR
+    final List<Map<String, dynamic>> newList = [];
+
+    for (var item in _yoklamaListesi) {
+      final student = item["student"] as Users;
+
+      final localAtt = localAttendances.firstWhere(
+        (att) => att.student_id == student.app,
+        orElse: () => Attendance(
+          attendances_id: "",
+          groups_id: "",
+          student_id: "",
+          taken_by: "",
+          attendance_date: "",
+          status: "FALSE",
+          note: "",
+        ),
+      );
+
+      newList.add({
+        "student": student,
+        "is_present": localAtt.status == "TRUE",
+        "note": localAtt.note,
+        "has_attendance": localAtt.attendances_id.isNotEmpty,
+        "attendance_id": localAtt.attendances_id,
+      });
+    }
+
+    if (mounted) {
+      setState(() {
+        _yoklamaListesi = newList;
+      });
+    }
+
+    _isLoadingLocalData = false;
   }
 
   String _formatDateFromString(String? dateStr) {
@@ -317,7 +502,7 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
     }
     return GestureDetector(
       onTap: () {
-        if (imageUrl != null && imageUrl.isNotEmpty) {
+        if (imageUrl != null && imageUrl.isNotEmpty && mounted) {
           showDialog(
             context: context,
             barrierDismissible: true,
@@ -342,6 +527,8 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
   }
 
   void _showStudentDetailDialog(BuildContext context, Users student) {
+    if (!mounted) return;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -528,6 +715,8 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
   }
 
   void _showNoteDialog(int index, Users student) {
+    if (!mounted) return;
+
     final controller = TextEditingController(
       text: _yoklamaListesi[index]["note"] ?? "",
     );
@@ -556,12 +745,14 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
             onPressed: () {
               _updateNote(index, controller.text);
               Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text("Not kaydedildi"),
-                  backgroundColor: Colors.green,
-                ),
-              );
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text("Not kaydedildi"),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              }
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo),
             child: const Text("Kaydet"),
@@ -569,48 +760,6 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
         ],
       ),
     );
-  }
-
-  Future<void> _saveAttendance() async {
-    setState(() => _isSaving = true);
-
-    final now = DateTime.now();
-    final formattedDate =
-        "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
-
-    int savedCount = 0;
-
-    for (var item in _yoklamaListesi) {
-      final Users ogrenci = item["student"];
-      final isPresent = item["is_present"] == true;
-      final note = item["note"] ?? "";
-
-      final attendance = Attendance(
-        attendances_id: "",
-        groups_id: widget.selectedGroup.groups_id,
-        student_id: ogrenci.app,
-        taken_by: widget.currentUser.app,
-        attendance_date: formattedDate,
-        status: isPresent ? "TRUE" : "FALSE",
-        note: note,
-      );
-
-      final success = await GoogleSheetService.saveAttendance(attendance);
-      if (success) savedCount++;
-    }
-
-    setState(() => _isSaving = false);
-
-    if (mounted) {
-      GoogleSheetService.invalidateCache('attendances');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("✅ $savedCount öğrencinin yoklaması kaydedildi"),
-          backgroundColor: Colors.green,
-        ),
-      );
-      Navigator.pop(context);
-    }
   }
 
   List<Map<String, dynamic>> get _filteredList {
@@ -646,7 +795,6 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // İstatistik Kartı (TakeAttendanceScreen'deki gibi)
         Container(
           margin: const EdgeInsets.all(16),
           padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
@@ -681,8 +829,35 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
             ],
           ),
         ),
-
-        // Arama ve Filtre
+        if (_showSuccess && _lastSaveMessage != null)
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.green.shade100,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.green.shade300),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.check_circle,
+                  color: Colors.green.shade700,
+                  size: 20,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    _lastSaveMessage!,
+                    style: TextStyle(
+                      color: Colors.green.shade800,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Row(
@@ -701,7 +876,9 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
                     ],
                   ),
                   child: TextField(
-                    onChanged: (value) => setState(() => _searchQuery = value),
+                    onChanged: (value) {
+                      if (mounted) setState(() => _searchQuery = value);
+                    },
                     style: const TextStyle(fontSize: 13),
                     decoration: InputDecoration(
                       hintText: "Öğrenci ara...",
@@ -736,18 +913,18 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
                     items: _filterOptions
                         .map((f) => DropdownMenuItem(value: f, child: Text(f)))
                         .toList(),
-                    onChanged: (value) =>
-                        setState(() => _selectedFilter = value!),
+                    onChanged: (value) {
+                      if (mounted && value != null) {
+                        setState(() => _selectedFilter = value);
+                      }
+                    },
                   ),
                 ),
               ),
             ],
           ),
         ),
-
         const SizedBox(height: 4),
-
-        // Öğrenci Listesi (TakeAttendanceScreen'deki gibi kartlar)
         Expanded(
           child: _filteredList.isEmpty
               ? Center(
@@ -776,7 +953,6 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
                     final ogrenci = item["student"] as Users;
                     final isPresent = item["is_present"] == true;
                     final hasNote = (item["note"] ?? "").isNotEmpty;
-
                     return _buildStudentCard(
                       ogrenci,
                       isPresent,
@@ -786,8 +962,6 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
                   },
                 ),
         ),
-
-        // Kaydet Butonu
         if (_hasUnsavedChanges)
           Container(
             padding: const EdgeInsets.all(16),
@@ -863,7 +1037,6 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
     );
   }
 
-  // 🔥 ÖĞRENCİ KARTI - TakeAttendanceScreen'deki gibi (telefon, doğum günü, arama butonu)
   Widget _buildStudentCard(
     Users student,
     bool isPresent,
@@ -880,13 +1053,15 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: isPresent
-              ? Colors.green.withOpacity(0.3)
-              : Colors.red.withOpacity(0.2),
-          width: 1.2,
+              ? Colors.green.withOpacity(0.5)
+              : Colors.red.withOpacity(0.5),
+          width: 1.5,
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: isPresent
+                ? Colors.green.withOpacity(0.1)
+                : Colors.red.withOpacity(0.1),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -896,7 +1071,6 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
           children: [
-            // Fotoğraf
             GestureDetector(
               onTap: () => _showStudentDetailDialog(context, student),
               child: _buildProfileImage(
@@ -907,15 +1081,12 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
               ),
             ),
             const SizedBox(width: 12),
-
-            // Bilgiler
             Expanded(
               child: GestureDetector(
                 onTap: () => _showStudentDetailDialog(context, student),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // İsim
                     Text(
                       "${student.first_name} ${student.last_name}",
                       style: const TextStyle(
@@ -927,8 +1098,6 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 4),
-
-                    // Doğum tarihi + yaş
                     if (student.b_date.isNotEmpty)
                       Row(
                         children: [
@@ -948,8 +1117,6 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
                         ],
                       ),
                     const SizedBox(height: 3),
-
-                    // Telefon
                     Row(
                       children: [
                         Icon(
@@ -971,8 +1138,6 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
                         ),
                       ],
                     ),
-
-                    // Not (varsa)
                     if (hasNote) ...[
                       const SizedBox(height: 4),
                       Row(
@@ -1002,35 +1167,30 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
                 ),
               ),
             ),
-
-            // Aksiyonlar
             Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // Yoklama switch
                 Transform.scale(
                   scale: 0.85,
                   child: Switch(
                     value: isPresent,
                     onChanged: (val) => _updateAttendance(index, val),
                     activeColor: Colors.green,
-                    inactiveThumbColor: Colors.red.shade300,
+                    inactiveThumbColor: Colors.red,
+                    inactiveTrackColor: Colors.red.shade100,
                     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
                 ),
                 const SizedBox(height: 4),
-
-                // Alt ikonlar
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Arama butonu
                     if (student.phone.isNotEmpty)
                       _buildActionIcon(Icons.call, Colors.green, () async {
                         final url = Uri.parse("tel:${student.phone}");
                         if (await canLaunchUrl(url)) {
                           await launchUrl(url);
-                        } else {
+                        } else if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                               content: Text("Arama yapılamıyor"),
@@ -1040,7 +1200,6 @@ class _YoklamaWidgetState extends State<_YoklamaWidget> {
                         }
                       }),
                     const SizedBox(width: 4),
-                    // Not butonu
                     _buildActionIcon(
                       Icons.note_alt_outlined,
                       hasNote ? Colors.indigo : Colors.grey.shade400,

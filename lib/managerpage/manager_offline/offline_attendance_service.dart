@@ -100,6 +100,16 @@ class OfflineAttendanceService {
               a.attendance_date.startsWith(formattedDate),
         );
 
+        String attendanceId;
+        if (existingIndex != -1) {
+          attendanceId = localAttendances[existingIndex].attendances_id;
+        } else if (item["attendance_id"]?.isNotEmpty == true) {
+          attendanceId = item["attendance_id"]!;
+        } else {
+          attendanceId =
+              "local_${DateTime.now().millisecondsSinceEpoch}_${student.app}";
+        }
+
         final newAttendance = Attendance(
           attendances_id: item["attendance_id"]?.isNotEmpty == true
               ? item["attendance_id"]
@@ -259,10 +269,26 @@ class OfflineAttendanceService {
               "📤 Gönderiliyor: student_id=${queued.attendance.student_id}, status=${queued.attendance.status}",
             );
 
-            final success = await GoogleSheetService.saveAttendance(
+            /*  final success = await GoogleSheetService.saveAttendance(
               queued.attendance,
-            ).timeout(const Duration(seconds: 10));
-
+            ).timeout(const Duration(seconds: 10));*/
+            Attendance attendanceToSend;
+            if (queued.attendance.attendances_id.startsWith('local_')) {
+              attendanceToSend = Attendance(
+                attendances_id: '', // 🟢 Boş gönder, sunucu yeni ID atayacak
+                groups_id: queued.attendance.groups_id,
+                student_id: queued.attendance.student_id,
+                taken_by: queued.attendance.taken_by,
+                attendance_date: queued.attendance.attendance_date,
+                status: queued.attendance.status,
+                note: queued.attendance.note,
+              );
+            } else {
+              attendanceToSend = queued.attendance;
+            }
+            final success = await GoogleSheetService.saveAttendance(
+              attendanceToSend,
+            );
             if (success) {
               succeeded.add(queued);
               _pendingChanges.remove(queued.attendance.attendances_id);
@@ -306,6 +332,12 @@ class OfflineAttendanceService {
     } finally {
       _isProcessing = false;
     }
+  }
+
+  // OfflineAttendanceService sınıfına ekle
+  Future<void> processQueueNow() async {
+    if (_attendanceQueue.isEmpty) return;
+    await _processQueue();
   }
 
   // 🔥 YENİ: Google Sheets'ten sadece güncel yoklamaları çek

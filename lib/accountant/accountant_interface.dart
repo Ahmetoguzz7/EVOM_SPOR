@@ -1,8 +1,10 @@
 // AccountantInterface.dart - DÜZELTİLMİŞ VERSİYON
 
+import 'package:EVOM_SPOR/accountant/accountant_signup.dart';
 import 'package:EVOM_SPOR/core/app_repository.dart';
 import 'package:EVOM_SPOR/managerpage/antremanprogram.dart';
 import 'package:EVOM_SPOR/managerpage/student_P&A.dart';
+import 'package:EVOM_SPOR/managerpage/student_tarihli_attandance.dart';
 import 'package:flutter/material.dart';
 
 import 'package:EVOM_SPOR/managerpage/payment_history.dart';
@@ -39,6 +41,8 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
   List<GroupStudent> _allRelations = [];
   List<Users> _allStudents = [];
   List<Users> _allUsers = [];
+  List<Coach> _allCoachesList = []; // 🔥 EKLENDI - Coach listesi
+
   @override
   void initState() {
     super.initState();
@@ -53,7 +57,7 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
       // TÜM VERİLERİ PARALEL OLARAK ÇEK
       final results = await Future.wait([
         GoogleSheetService.getStudents(), // 0: List<Users>
-        GoogleSheetService.getCoachesOnlyCached(), // 1: List<Users> ⬅️ Coach değil, Users!
+        GoogleSheetService.getCoachesOnlyCached(), // 1: List<Users> (koç kullanıcıları)
         GoogleSheetService.getGroupsCached(), // 2: List<Group>
         GoogleSheetService.getUsersCached(), // 3: List<Users>
         GoogleSheetService.getPaymentsCached(), // 4: List<Payment>
@@ -62,28 +66,28 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
           userId: "all",
           forceRefresh: true,
         ), // 6: List<Notifications>
+        GoogleSheetService.getCoachesCached(), // 7: 🔥 EKLENDI - Coach listesi
       ]);
 
       final students = results[0] as List<Users>;
-      final coachesUsers = results[1] as List<Users>; // ✅ DÜZELTİLDİ
+      final coachesUsers = results[1] as List<Users>;
       final groups = results[2] as List<Group>;
       final allUsers = results[3] as List<Users>;
       final payments = results[4] as List<Payment>;
       final relations = results[5] as List<GroupStudent>;
       final allNotifications = results[6] as List<Notifications>;
-      _allUsers = allUsers;
-      stopwatch.stop();
-      /* print(
-        "⏱️ Tüm veriler PARALEL olarak ${stopwatch.elapsedMilliseconds}ms'de yüklendi",
-      );*/
+      final coachesList = results[7] as List<Coach>; // 🔥 EKLENDI
 
-      // Antrenman programı için verileri sakla
+      _allUsers = allUsers;
+      _allCoachesList = coachesList; // 🔥 EKLENDI
       _allGroups = groups;
       _allRelations = relations;
       _allStudents = students;
 
-      // Toplam koç sayısı (Users listesinden)
-      final totalCoaches = coachesUsers.length;
+      stopwatch.stop();
+
+      // Toplam koç sayısı (Coach listesinden)
+      final totalCoaches = coachesList.length;
 
       // Toplam öğrenci sayısı
       final totalStudents = students
@@ -168,8 +172,6 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
         'upcomingBirthdays': birthdays,
       };
     } catch (e, stackTrace) {
-      // print("❌ Veri yükleme hatası: $e");
-      // print(stackTrace);
       return {
         'totalStudents': 0,
         'totalCoaches': 0,
@@ -179,6 +181,53 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
         'upcomingBirthdays': <Users>[],
       };
     }
+  }
+
+  // 🔥 Koç ismini doğru şekilde alan metod
+  String _getCoachNameFromGroup(String coachId) {
+    if (coachId.isEmpty) return "Atanmamış";
+
+    // 1. Coach listesinde coach_id ile ara
+    final coach = _allCoachesList.firstWhere(
+      (c) => c.coach_id == coachId,
+      orElse: () => Coach(
+        coach_id: "",
+        user_id: "",
+        branches_id: "",
+        sports_id: "",
+        bio: "",
+        certificate_info: "",
+        monthly_salary: "",
+        hired_at: "",
+      ),
+    );
+
+    if (coach.user_id.isEmpty) return "Atanmamış";
+
+    // 2. Coach'un user_id'si ile _allUsers'da ara
+    final coachUser = _allUsers.firstWhere(
+      (u) => u.app == coach.user_id,
+      orElse: () => Users(
+        app: "",
+        branches_id: "",
+        first_name: "",
+        last_name: "",
+        email: "",
+        phone: "",
+        password_hash: "",
+        role: "",
+        profile_photo_url: "",
+        amount: "",
+        b_date: "",
+        created_at: "",
+        last_login: "",
+        is_active: "",
+      ),
+    );
+
+    if (coachUser.first_name.isEmpty) return "Atanmamış";
+
+    return "${coachUser.first_name} ${coachUser.last_name}".trim();
   }
 
   int _getDaysUntilBirthday(String birthDateStr) {
@@ -202,29 +251,6 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
     return "$days gün sonra";
   }
 
-  // Bugün antrenmanı olan öğrencileri getir
-  List<Users> _getTodaysStudents() {
-    final todayName = _getTodayName();
-    final todayGroups = <String>[];
-
-    for (var group in _allGroups) {
-      if (group.schedule.contains(todayName)) {
-        todayGroups.add(group.groups_id);
-      }
-    }
-
-    final students = <Users>[];
-    for (var groupId in todayGroups) {
-      final studentIds = _allRelations
-          .where((r) => r.groups_id == groupId && r.is_active == "TRUE")
-          .map((r) => r.student_id)
-          .toList();
-      students.addAll(_allStudents.where((s) => studentIds.contains(s.app)));
-    }
-
-    return students.toSet().toList();
-  }
-
   String _getTodayName() {
     final days = [
       "Pazartesi",
@@ -237,9 +263,57 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
     ];
     final now = DateTime.now();
     return days[now.weekday - 1];
-  } // 🔥 Bugün Antrenmanı Olanlar ve Gruplar Kartı
+  }
 
-  //// 🔥 GELİŞTİRİLMİŞ: Bugün Antrenmanı Olan Gruplar Kartı (Antrenör isimli)
+  List<Group> _getTodaysGroups() {
+    final todayName = _getTodayName();
+    final todayGroups = <Group>[];
+
+    for (var group in _allGroups) {
+      if (group.schedule.toLowerCase().contains(todayName.toLowerCase())) {
+        todayGroups.add(group);
+      }
+    }
+
+    // Saate göre sırala
+    todayGroups.sort((a, b) {
+      final aTime = _getGroupStartTime(a, todayName);
+      final bTime = _getGroupStartTime(b, todayName);
+      return _timeToMinutes(aTime).compareTo(_timeToMinutes(bTime));
+    });
+
+    return todayGroups;
+  }
+
+  String _getGroupScheduleForDay(Group group, String dayName) {
+    final schedule = group.schedule;
+    final pattern = RegExp('$dayName:(\\d{2}:\\d{2})-(\\d{2}:\\d{2})');
+    final match = pattern.firstMatch(schedule);
+    if (match != null) {
+      return "${match.group(1)} - ${match.group(2)}";
+    }
+    return "Saat belirtilmemiş";
+  }
+
+  String _getGroupStartTime(Group group, String dayName) {
+    final schedule = group.schedule;
+    final pattern = RegExp('$dayName:(\\d{2}:\\d{2})-(\\d{2}:\\d{2})');
+    final match = pattern.firstMatch(schedule);
+    if (match != null) {
+      return match.group(1) ?? "00:00";
+    }
+    return "23:59";
+  }
+
+  int _timeToMinutes(String time) {
+    final parts = time.split(':');
+    if (parts.length == 2) {
+      return int.parse(parts[0]) * 60 + int.parse(parts[1]);
+    }
+    return 0;
+  }
+
+  // 🔥 DÜZELTİLMİŞ: Bugün Antrenmanı Olan Gruplar Kartı (Antrenör isimli)
   Widget _buildTodayTrainingCard() {
     final todaysGroups = _getTodaysGroups();
     final todayName = _getTodayName();
@@ -278,36 +352,8 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
           const SizedBox(height: 12),
           ...todaysGroups.map((group) {
             final scheduleToday = _getGroupScheduleForDay(group, todayName);
-
-            // 🔥 Antrenör ismini bul
-            String coachName = "Atanmamış";
-            final coachUser = _allUsers.firstWhere(
-              (user) => user.app.toString() == group.coach_id.toString(),
-              orElse: () => Users(
-                app: "",
-                branches_id: "",
-                first_name: "",
-                last_name: "",
-                email: "",
-                phone: "",
-                password_hash: "",
-                role: "",
-                profile_photo_url: "",
-                amount: "",
-                b_date: "",
-                created_at: "",
-                last_login: "",
-                is_active: "",
-              ),
-            );
-            if (coachUser.first_name.isNotEmpty) {
-              coachName = "${coachUser.first_name} ${coachUser.last_name}"
-                  .trim();
-              // Uzun isimleri kısalt
-              if (coachName.length > 20) {
-                coachName = coachName.substring(0, 18) + "..";
-              }
-            }
+            // 🔥 DÜZELTİLDİ: _getCoachNameFromGroup kullanılıyor
+            final coachName = _getCoachNameFromGroup(group.coach_id);
 
             return Container(
               margin: const EdgeInsets.only(bottom: 10),
@@ -319,7 +365,6 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
               ),
               child: Row(
                 children: [
-                  // Grup İkonu
                   Container(
                     width: 45,
                     height: 45,
@@ -334,12 +379,10 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  // Bilgiler
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Grup Adı
                         Text(
                           group.name,
                           style: const TextStyle(
@@ -350,7 +393,6 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
                           overflow: TextOverflow.ellipsis,
                         ),
                         const SizedBox(height: 4),
-                        // Antrenör Adı (tek satırda, ikonlu)
                         Row(
                           children: [
                             Icon(
@@ -382,7 +424,6 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
                       ],
                     ),
                   ),
-                  // Saat
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 10,
@@ -408,61 +449,6 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
         ],
       ),
     );
-  }
-
-  // Grubun belirli bir gündeki programını getir
-  String _getGroupScheduleForDay(Group group, String dayName) {
-    final schedule = group.schedule;
-    final pattern = RegExp('$dayName:(\\d{2}:\\d{2})-(\\d{2}:\\d{2})');
-    final match = pattern.firstMatch(schedule);
-    if (match != null) {
-      return "${match.group(1)} - ${match.group(2)}";
-    }
-    return "Saat belirtilmemiş";
-  }
-
-  List<Group> _getTodaysGroups() {
-    final todayName = _getTodayName(); // "Cuma"
-    final todayGroups = <Group>[];
-
-    for (var group in _allGroups) {
-      // 🔥 KÜÇÜK/BÜYÜK HARF DUYARSIZ KARŞILAŞTIRMA
-      if (group.schedule.toLowerCase().contains(todayName.toLowerCase())) {
-        todayGroups.add(group);
-      }
-    }
-
-    // Saate göre sırala
-    todayGroups.sort((a, b) {
-      final aTime = _getGroupStartTime(a, todayName);
-      final bTime = _getGroupStartTime(b, todayName);
-      return _timeToMinutes(aTime).compareTo(_timeToMinutes(bTime));
-    });
-
-    print(
-      "🔥 Bugün ($todayName) dersi olan grup sayısı: ${todayGroups.length}",
-    );
-    return todayGroups;
-  }
-
-  // Grubun bugünkü başlangıç saatini al
-  String _getGroupStartTime(Group group, String dayName) {
-    final schedule = group.schedule;
-    final pattern = RegExp('$dayName:(\\d{2}:\\d{2})-(\\d{2}:\\d{2})');
-    final match = pattern.firstMatch(schedule);
-    if (match != null) {
-      return match.group(1) ?? "00:00";
-    }
-    return "23:59";
-  }
-
-  // Saat formatını karşılaştırma için dakikaya çevir
-  int _timeToMinutes(String time) {
-    final parts = time.split(':');
-    if (parts.length == 2) {
-      return int.parse(parts[0]) * 60 + int.parse(parts[1]);
-    }
-    return 0;
   }
 
   @override
@@ -532,7 +518,7 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
                   const SizedBox(height: 12),
                   _buildStatsRow2(totalGroups, monthlyIncome),
                   const SizedBox(height: 20),
-                  _buildTodayTrainingCard(),
+                  //  _buildTodayTrainingCard(),
                   _buildAnnouncementsCard(recentNotifications),
                   const SizedBox(height: 16),
                   _buildBirthdaysCard(upcomingBirthdays),
@@ -988,7 +974,7 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
   Widget _buildMenuGrid() {
     final List<Map<String, dynamic>> allMenus = [
       {
-        "title": "Öğrenci Ödeme Alma\nSayfası",
+        "title": "Öğrenci Ödeme\nSayfası",
         "subtitle": "Öğrencilerin aylık aidatlarını alabilirsiniz.",
         "icon": Icons.search,
         "color": Colors.teal,
@@ -1019,27 +1005,12 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
         "route": "notification",
       },
       {
-        "title": "Ödeme Hatırlatma",
-        "subtitle":
-            "Öğrencilerin kayıt olma tarihlerine göre ödeme yapılmayan öğrencileri takip edebilirsiniz.",
-        "icon": Icons.notifications_active,
-        "color": Colors.red,
-        "route": "payment_reminder",
-      },
-      {
         "title": "Antrenman Programı",
         "subtitle":
             "Haftalık grupların antrenman programlarını takip edebilirsiniz ve yeni antrenman ekleyebilir/silebilirisiniz.",
         "icon": Icons.calendar_month,
         "color": Colors.teal,
         "route": "training_schedule",
-      },
-
-      {
-        "title": "Raporlar",
-        "icon": Icons.bar_chart,
-        "color": Colors.indigo,
-        "route": "reports",
       },
       {
         "title": "Grup Yönetimi",
@@ -1050,12 +1021,33 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
         "route": "group",
       },
       {
+        "title": "Ödeme Hatırlatma",
+        "subtitle":
+            "Öğrencilerin kayıt olma tarihlerine göre ödeme yapılmayan öğrencileri takip edebilirsiniz.",
+        "icon": Icons.notifications_active,
+        "color": Colors.red,
+        "route": "payment_reminder",
+      },
+      {
         "title": "Öğrenci Aktif/Pasif",
         "subtitle":
             "Devam eden/etmeyen öğrencileri ayırabilir ve görüntüleyebilirsiniz.",
         "icon": Icons.person_add_disabled,
         "color": Colors.deepOrange,
         "route": "pasifaktif",
+      },
+      {
+        "title": "Raporlar",
+        "icon": Icons.bar_chart,
+        "color": Colors.indigo,
+        "route": "reports",
+      },
+      {
+        "title": "Devamsızlık\nTakibi",
+        "subtitle": "Öğrencilerin devamsızlık durumlarını görüntüleyin",
+        "icon": Icons.warning_amber,
+        "color": Colors.deepOrange,
+        "route": "attendance_detail",
       },
     ];
 
@@ -1091,10 +1083,9 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
       case "register":
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const AdvancedSignUpPage()),
+          MaterialPageRoute(builder: (_) => const AccountantSignupPage()),
         );
         break;
-
       case "attendance":
         Navigator.push(
           context,
@@ -1142,7 +1133,6 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
         if (!repo.isLoaded) {
           await repo.loadAllData();
         }
-
         if (!context.mounted) return;
         Navigator.push(
           context,
@@ -1150,8 +1140,8 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
             builder: (_) => WeeklyTrainingScreen(
               groups: repo.allGroups,
               relations: repo.allGroupStudents,
-              students: repo.allUsers, // Tüm kullanıcılar (koçlar için gerekli)
-              coaches: repo.allCoaches, // Coach listesi
+              students: repo.allUsers,
+              coaches: repo.allCoaches,
               onScheduleUpdated: (groupId, newSchedule) async {
                 await GoogleSheetService.updateGroupSchedule(
                   groupId,
@@ -1168,7 +1158,6 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
           context,
           MaterialPageRoute(builder: (_) => GroupManagementScreen()),
         );
-
         break;
       case "reports":
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1179,6 +1168,15 @@ class _AccountantInterfaceState extends State<AccountantInterface> {
         Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const StudentActivationScreen()),
+        );
+        break;
+      // _navigateToRoute metoduna ekle:
+      case "attendance_detail":
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const StudentAttendanceDetailScreen(),
+          ),
         );
         break;
     }

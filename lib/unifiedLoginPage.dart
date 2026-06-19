@@ -12,11 +12,15 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:EVOM_SPOR/core/app_repository.dart';
+import 'package:EVOM_SPOR/local/offline_syn_service.dart';
+import 'package:EVOM_SPOR/managerpage/manager_offline/offline_attendance_service.dart';
 import 'package:EVOM_SPOR/widgets/acountantoverlay.dart';
 import 'package:EVOM_SPOR/widgets/coachoverlay.dart';
 import 'package:EVOM_SPOR/widgets/loading_manager.dart';
 import 'package:EVOM_SPOR/widgets/parentLoading.dart';
 import 'package:EVOM_SPOR/widgets/studentoverlay.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -43,7 +47,8 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _otpController = TextEditingController();
-
+  final _baseUrl =
+      "https://script.google.com/macros/s/AKfycbyPokHSOEp08uz2SgbQ6z7LFwZ2P6mMb77XmQZAzZNYsRSxnpKohgkP3uPmAALk96RhMg/exec";
   bool _isLoading = false;
   bool _obscurePassword = true;
   bool _isOtpMode = false;
@@ -69,6 +74,8 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
     'muhasebeci',
     'coach',
     'antrenör',
+    'assistant_coach',
+    'yardımcı_antrenör',
     'student',
     'öğrenci',
     'parent',
@@ -88,24 +95,21 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
     final formatter = DateFormat('dd/MM/yyyy HH:mm', 'tr_TR');
     return formatter.format(date);
   }
+  // unifiedLoginPage.dart - initState kısmı (sadece değişen kısım)
 
   @override
   void initState() {
     super.initState();
 
-    // Ana fade animasyonu
+    // Animasyonlar (Aynen kalabilir)
     _fadeController = AnimationController(
       duration: const Duration(milliseconds: 800),
       vsync: this,
     );
-
-    // Zıplama animasyonu
     _bounceController = AnimationController(
       duration: const Duration(milliseconds: 1200),
       vsync: this,
     )..repeat(reverse: true);
-
-    // Kayma animasyonu
     _slideController = AnimationController(
       duration: const Duration(milliseconds: 500),
       vsync: this,
@@ -115,28 +119,75 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
       parent: _fadeController,
       curve: Curves.easeOut,
     );
-
     _scaleAnimation = Tween<double>(begin: 0.5, end: 1.0).animate(
       CurvedAnimation(parent: _fadeController, curve: Curves.elasticOut),
     );
-
     _slideAnimation =
         Tween<Offset>(begin: const Offset(0, 0.5), end: Offset.zero).animate(
           CurvedAnimation(parent: _slideController, curve: Curves.easeOutCubic),
         );
 
-    // Animasyonları başlat
     _fadeController.forward();
     _slideController.forward();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkSavedUser();
     });
+
+    // 🔥 YENİ: Offline-First başlatma (KAYDEDİLMİŞ KULLANICI YOKSA)
+    _initializeOfflineFirst();
+  }
+
+  /// 🚀 OFFLINE-FIRST BAŞLATMA
+  Future<void> _initializeOfflineFirst() async {
+    print("🚀 Offline-First başlatılıyor...");
+
+    final repo = AppRepository();
+    await repo.init();
+
+    final syncManager = OfflineSyncManager();
+    await syncManager.init(repo);
+
+    syncManager.onDataChanged.listen((_) {
+      if (mounted) {
+        setState(() {});
+      }
+    });
+
+    syncManager.syncNow();
+
+    print("✅ Offline-First başlatıldı");
+  }
+
+  /// 🔥 Arka planda verileri yükle (kullanıcı hissetmez)
+  Future<void> _loadDataInBackground() async {
+    try {
+      print("🔄 Arka plan veri yükleme başladı...");
+
+      final repo = AppRepository();
+
+      // Hive başlat
+      await repo.init();
+
+      // Verileri arka planda yükle (UI bloklanmaz)
+      repo.loadCriticalData(
+        onProgress: (p) {
+          print("📊 Veri yükleme: ${(p * 100).toInt()}%");
+        },
+        onMessage: (msg) {
+          print("📢 $msg");
+        },
+      );
+
+      print("✅ Arka plan veri yükleme başlatıldı");
+    } catch (e) {
+      print("❌ Arka plan yükleme hatası: $e");
+    }
   }
 
   Future<void> saveToken(String token) async {
     final url = Uri.parse(
-      "https://script.google.com/macros/s/AKfycby3EW0jopQmtAZf-v_TVW8oNUS7BANs6EuMgAi4bisyz07gtlWqAQtPFIF6eIIf_cTXRg/exec",
+      "https://script.google.com/macros/s/AKfycbyPokHSOEp08uz2SgbQ6z7LFwZ2P6mMb77XmQZAzZNYsRSxnpKohgkP3uPmAALk96RhMg/exec",
     );
 
     final request = http.Request('POST', url)
@@ -235,7 +286,11 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
     if (lowerRole == 'admin' || lowerRole == 'yönetici') return 'admin';
     if (lowerRole == 'accountant' || lowerRole == 'muhasebeci')
       return 'accountant';
-    if (lowerRole == 'coach' || lowerRole == 'antrenör') return 'coach';
+    if (lowerRole == 'coach' ||
+        lowerRole == 'antrenör' ||
+        lowerRole == 'assistant_coach' ||
+        lowerRole == 'yardımcı_antrenör')
+      return 'coach';
     if (lowerRole == 'student' || lowerRole == 'öğrenci') return 'student';
     if (lowerRole == 'parent' || lowerRole == 'veli') return 'parent';
     return 'invalid';
@@ -280,7 +335,11 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
     }
 
     setState(() => _isLoading = true);
-
+    final hasInternet = await _checkInternet();
+    if (!hasInternet) {
+      _showNoInternetDialog();
+      return;
+    }
     try {
       final user = await GoogleSheetService.login(email, password);
 
@@ -374,9 +433,7 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
       if (mounted) {
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(
-            builder: (_) => CoachLoadingScreen(user: user, users: user),
-          ),
+          MaterialPageRoute(builder: (_) => CoachLoadingScreen(user: user)),
         );
       }
     } else if (roleType == 'student') {
@@ -400,6 +457,13 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
         isError: true,
       );
       setState(() => _isLoading = false);
+    }
+    try {
+      final attendanceService = OfflineAttendanceService();
+      await attendanceService.init();
+      await attendanceService.processQueueNow();
+    } catch (e) {
+      print("⚠️ Arka plan yoklama işlemi başlatılamadı: $e");
     }
   }
 
@@ -927,5 +991,72 @@ class _UnifiedLoginPageState extends State<UnifiedLoginPage>
         ],
       ),
     );
+  }
+
+  Future<bool> _checkInternet() async {
+    try {
+      final results = await Connectivity().checkConnectivity();
+      if (results == ConnectivityResult.none) return false;
+
+      final response = await http
+          .get(Uri.parse("$_baseUrl?sheet=users&limit=1"))
+          .timeout(const Duration(seconds: 5));
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  void _showNoInternetDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Row(
+          children: [
+            Icon(Icons.wifi_off, color: Colors.red, size: 32),
+            SizedBox(width: 12),
+            Text("İnternet Bağlantısı Yok"),
+          ],
+        ),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text("İnternet bağlantınız bulunmuyor."),
+            SizedBox(height: 12),
+            Text(
+              "Lütfen Wi-Fi veya mobil verinizi açtıktan sonra tekrar deneyin.",
+              style: TextStyle(fontSize: 13),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => exit(0),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text("ÇIKIŞ"),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _checkInternetAndRetry();
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            child: const Text("TEKRAR DENE"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _checkInternetAndRetry() async {
+    final hasInternet = await _checkInternet();
+    if (hasInternet && mounted) {
+      _handleLogin();
+    } else if (mounted) {
+      _showNoInternetDialog();
+    }
   }
 }
